@@ -63,10 +63,13 @@ jobs:
           ls -lh "steam-info-panel-${VER}.zip"
 
       - name: 生成 CRX（需 CRX_PRIVATE_KEY secret，保持固定扩展 ID）
-        if: ${{ secrets.CRX_PRIVATE_KEY != '' }}
         env:
           CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
         run: |
+          if [ -z "$CRX_PRIVATE_KEY" ]; then
+            echo "未配置 CRX_PRIVATE_KEY secret，跳过 CRX 生成"
+            exit 0
+          fi
           pip install crx3 >/dev/null 2>&1
           printf '%s' "$CRX_PRIVATE_KEY" > key.pem
           crx3 create -pk key.pem -o "steam-info-panel-${{ steps.meta.outputs.version }}.crx" "_pkg/steam-info-panel"
@@ -92,8 +95,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 追加 CRX 到 Release（如已生成）
-        if: ${{ secrets.CRX_PRIVATE_KEY != '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
         run: |
+          if [ -z "$CRX_PRIVATE_KEY" ]; then
+            echo "未配置 CRX_PRIVATE_KEY，无 CRX 可追加"
+            exit 0
+          fi
           gh release upload "${{ steps.meta.outputs.tag }}" "steam-info-panel-${{ steps.meta.outputs.version }}.crx" --repo "${{ github.repository }}"
