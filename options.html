@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Steam 游戏速查面板 · 设置</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 32px;
+        background: #1b2838;
+        color: #c7d5e0;
+        font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        font-size: 14px;
+        line-height: 1.7;
+      }
+      h1 {
+        font-size: 18px;
+        color: #fff;
+        margin: 0 0 4px 0;
+      }
+      .sub {
+        color: #7c93a8;
+        font-size: 12px;
+        margin-bottom: 24px;
+      }
+      .card {
+        background: #16202d;
+        border: 1px solid #2a475e;
+        border-radius: 6px;
+        padding: 18px 20px;
+        max-width: 720px;
+        margin-bottom: 16px;
+      }
+      h2 {
+        font-size: 14px;
+        color: #66c0f4;
+        margin: 0 0 10px 0;
+      }
+      button {
+        background: #66c0f4;
+        color: #1b2838;
+        border: 0;
+        padding: 8px 18px;
+        border-radius: 4px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #7fd0ff;
+      }
+      code {
+        background: #0e1620;
+        padding: 1px 5px;
+        border-radius: 3px;
+        color: #a4d0e8;
+      }
+      ul {
+        margin: 8px 0 0 0;
+        padding-left: 20px;
+      }
+      li {
+        margin: 3px 0;
+      }
+      .muted {
+        color: #7c93a8;
+        font-size: 12px;
+      }
+      #stat {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #7c93a8;
+      }
+      .filebtn {
+        background: #2a475e;
+        color: #c7d5e0;
+        padding: 8px 14px;
+        border-radius: 4px;
+        font-size: 13px;
+        cursor: pointer;
+        display: inline-block;
+      }
+      .filebtn:hover {
+        background: #33566f;
+      }
+      input[type="text"] {
+        flex: 1;
+        padding: 7px 10px;
+        border-radius: 4px;
+        border: 1px solid #2a475e;
+        background: #0e1620;
+        color: #c7d5e0;
+        font-size: 13px;
+      }
+      a {
+        color: #66c0f4;
+      }
+      .warnbox {
+        display: none;
+        background: #3a2a12;
+        border: 1px solid #7a5a1c;
+        color: #ffca6a;
+        padding: 10px 12px;
+        border-radius: 4px;
+        margin-bottom: 16px;
+        max-width: 720px;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Steam 游戏速查面板</h1>
+    <div class="sub">版本 1.0.9 · 打开任意 Steam 商店游戏页，右侧自动显示六项检测结果</div>
+    <div id="envwarn" class="warnbox"></div>
+
+    <div class="card">
+      <h2>六项功能</h2>
+      <ul>
+        <li><b>史低价格</b>：ITAD（可选 key）取 Steam 国区史低 + Steam 国区/美区当前价，兜底 CheapShark 美元口径</li>
+        <li><b>家庭库是否已有</b>：读取账号 userdata 与页面库存提示，区分本人拥有 / 家庭共享</li>
+        <li><b>DLC 是否单独下载</b>：拉取 DLC 清单，按类型区分「随本体安装」与「独立下载项」</li>
+        <li><b>是否在 XGP 会员库</b>：比对 Xbox Game Pass 目录</li>
+        <li><b>是否有 D 加密</b>：来自 PCGamingWiki / SteamDB 的 Denuvo 与 DRM 信息</li>
+        <li><b>是否在 Epic 免费过</b>：比对 Epic 历史免费记录（ITAD 赠送记录）</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>缓存</h2>
+      <div class="muted">价格 6 小时 · 库存 10 分钟 · DLC/GamePass 12 小时 · DRM 24 小时</div>
+      <div id="stat">读取中…</div>
+      <div style="margin-top: 12px"><button id="clear">清除全部缓存</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Game Pass 目录</h2>
+      <div class="muted">插件内置 631 款 Game Pass 游戏清单，离线比对；可一键在线更新为最新阵容。</div>
+      <div id="xgpstat">读取中…</div>
+      <div style="margin-top: 12px"><button id="xgpupdate">在线更新目录</button></div>
+    </div>
+
+    <div class="card">
+      <h2>ITAD API key（国区史低 + Epic 免费检测共用）</h2>
+      <div class="muted">
+        插件<b>不再内置 key</b>，需自行免费申请：登录 IsThereAnyDeal 后进入
+        <a href="https://isthereanydeal.com/apps/my/" target="_blank" rel="noreferrer">My Apps（isthereanydeal.com/apps/my）</a>
+        创建应用即可生成 key（API 文档：<a href="https://docs.isthereanydeal.com/" target="_blank" rel="noreferrer">docs.isthereanydeal.com</a>）。<br />
+        配置后可得到 Steam 商店国区精确史低，并启用「Epic 免费检测」；不配置时国区史低退化为本地观测口径，Epic 检测不可用。
+      </div>
+      <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center">
+        <input id="itad" type="text" placeholder="填入你的 ITAD API key" />
+        <button id="saveitad">保存</button>
+      </div>
+      <div id="itadstat"></div>
+    </div>
+
+    <div class="card">
+      <h2>Epic 免费检测（显示「是否在 Epic 免费过」）</h2>
+      <div class="muted">
+        免登录比对 Epic 历史免费记录：当前游戏若在 Epic 曾 / 正 / 将 0 元领取，
+        Steam 商店页面板会提示。数据源为 IsThereAnyDeal 赠送记录（需在上方「ITAD API key」处配置自己的 key，
+        <a href="https://isthereanydeal.com/apps/my/" target="_blank" rel="noreferrer">点此申请</a>），
+        覆盖 Epic 自 2018 年起每周喜加一历史。
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Steam 客户端本地数据</h2>
+      <div class="muted">导入后可离线判定「本人拥有」与「家庭共享借入」，无需网页登录态。</div>
+      <ul>
+        <li><code>localconfig.vdf</code> — <code>Steam\userdata\&lt;steamid&gt;\config\localconfig.vdf</code>（本人库）</li>
+        <li><code>packageinfo.vdf</code> — <code>Steam\appcache\packageinfo.vdf</code>（按 owner 区分共享借入，推荐）</li>
+      </ul>
+      <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap">
+        <label class="filebtn">选择 localconfig.vdf<input id="flc" type="file" accept=".vdf" style="display: none" /></label>
+        <label class="filebtn">选择 packageinfo.vdf<input id="fpi" type="file" accept=".vdf" style="display: none" /></label>
+        <button id="clearlocal">清除本地数据</button>
+      </div>
+      <div id="localstat">未导入</div>
+    </div>
+
+    <div class="card">
+      <h2>使用提示</h2>
+      <ul>
+        <li>「家庭库是否已有」需要浏览器已登录 Steam 商店；未登录时该项显示「未登录」。</li>
+        <li>XGP 目录接口依赖网络可达性，若显示「待确认」，请点击该项在 Xbox 官网手动核对。</li>
+        <li>面板点击标题可折叠，点击任意一行展开详情，点「重新检测」强制刷新全部数据。</li>
+        <li>
+          <b>在 Steam 客户端（Millennium / Extendium）里请勿点击「扩展程序选项」</b>——该环境（CEF）没有浏览器标签页，
+          打开设置页会导致客户端闪退。请直接使用商店页面板上的<b>「⚙ 设置」</b>，功能与本页一致。
+        </li>
+      </ul>
+    </div>
+
+    <script src="options.js"></script>
+  </body>
+</html>

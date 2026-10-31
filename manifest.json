@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Steam 游戏速查面板",
+  "version": "1.0.9",
+  "description": "在 Steam 商店游戏页右侧显示：史低价格 / 家庭库是否已有 / DLC 是否单独下载 / 是否在 XGP 会员库 / 是否含 D 加密（Denuvo）/ 是否在 Epic 免费过（免登录）。",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [
+    "https://store.steampowered.com/*",
+    "https://api.steampowered.com/*",
+    "https://www.cheapshark.com/*",
+    "https://steamdb.info/*",
+    "https://www.pcgamingwiki.com/*",
+    "https://catalog.gamepass.com/*",
+    "https://displaycatalog.mp.microsoft.com/*",
+    "https://api.isthereanydeal.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://store.steampowered.com/app/*",
+        "https://store.steampowered.com/sub/*",
+        "https://store.steampowered.com/bundle/*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html"
+  },
+  "action": {
+    "default_title": "Steam 游戏速查面板（在 Steam 游戏页生效）"
+  }
+}

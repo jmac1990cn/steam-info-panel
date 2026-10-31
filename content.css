@@ -1,0 +1,365 @@
+/* Steam 游戏速查面板 —— 面板样式（适配 Steam 深色主题） */
+
+#sip-panel {
+  --sip-bg: #16202d;
+  --sip-bg2: #1b2838;
+  --sip-border: #2a475e;
+  --sip-text: #c7d5e0;
+  --sip-dim: #7c93a8;
+  --sip-ok: #66c0f4;
+  --sip-good: #4caf50;
+  --sip-warn: #ffb43c;
+  --sip-bad: #e05a5a;
+
+  background: var(--sip-bg);
+  border: 1px solid var(--sip-border);
+  border-radius: 6px;
+  color: var(--sip-text);
+  font-family: "Motiva Sans", "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 16px 0;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+#sip-panel * {
+  box-sizing: border-box;
+}
+
+#sip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(90deg, #1b2838, #16202d);
+  border-bottom: 1px solid var(--sip-border);
+  cursor: pointer;
+  user-select: none;
+}
+
+#sip-head .sip-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #fff;
+  letter-spacing: 0.3px;
+  flex: 1;
+}
+
+#sip-head .sip-toggle {
+  color: var(--sip-dim);
+  font-size: 11px;
+  transition: transform 0.15s;
+}
+
+#sip-panel.sip-collapsed .sip-toggle {
+  transform: rotate(-90deg);
+}
+
+#sip-panel.sip-collapsed #sip-body {
+  display: none;
+}
+
+#sip-body {
+  padding: 6px 0 8px 0;
+}
+
+.sip-item {
+  border-bottom: 1px solid rgba(42, 71, 94, 0.5);
+}
+
+.sip-item:last-child {
+  border-bottom: none;
+}
+
+.sip-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.sip-row:hover {
+  background: rgba(102, 192, 244, 0.06);
+}
+
+.sip-idx {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 3px;
+  background: var(--sip-bg2);
+  border: 1px solid var(--sip-border);
+  color: var(--sip-ok);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.sip-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.sip-label {
+  color: #fff;
+  font-size: 13px;
+}
+
+.sip-sub {
+  color: var(--sip-dim);
+  font-size: 12px;
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.sip-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.sip-badge.b-load {
+  color: var(--sip-dim);
+  border-color: var(--sip-border);
+}
+.sip-badge.b-ok {
+  color: var(--sip-good);
+  border-color: rgba(76, 175, 80, 0.5);
+  background: rgba(76, 175, 80, 0.1);
+}
+.sip-badge.b-warn {
+  color: var(--sip-warn);
+  border-color: rgba(255, 180, 60, 0.5);
+  background: rgba(255, 180, 60, 0.1);
+}
+.sip-badge.b-bad {
+  color: var(--sip-bad);
+  border-color: rgba(224, 90, 90, 0.5);
+  background: rgba(224, 90, 90, 0.1);
+}
+.sip-badge.b-info {
+  color: var(--sip-ok);
+  border-color: rgba(102, 192, 244, 0.5);
+  background: rgba(102, 192, 244, 0.1);
+}
+
+.sip-detail {
+  display: none;
+  padding: 4px 12px 10px 38px;
+  color: var(--sip-dim);
+  font-size: 12px;
+}
+
+.sip-item.sip-open .sip-detail {
+  display: block;
+}
+
+.sip-detail b {
+  color: var(--sip-text);
+  font-weight: 600;
+}
+
+.sip-detail a {
+  color: var(--sip-ok);
+  text-decoration: none;
+}
+
+.sip-detail a:hover {
+  text-decoration: underline;
+}
+
+.sip-kv {
+  display: flex;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.sip-kv span:first-child {
+  color: #8ba6bd;
+  min-width: 74px;
+}
+
+.sip-dlc {
+  max-height: 190px;
+  overflow-y: auto;
+  margin-top: 6px;
+  border-top: 1px dashed rgba(42, 71, 94, 0.8);
+  padding-top: 6px;
+}
+
+.sip-dlc-row {
+  display: flex;
+  gap: 6px;
+  padding: 3px 0;
+  align-items: baseline;
+}
+
+.sip-dlc-row .t {
+  color: var(--sip-text);
+  flex: 1;
+}
+
+.sip-dlc-row .v {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  border: 1px solid var(--sip-border);
+  white-space: nowrap;
+}
+
+.sip-dlc-row .v.alone {
+  color: var(--sip-warn);
+  border-color: rgba(255, 180, 60, 0.45);
+}
+
+.sip-dlc-row .v.pack {
+  color: var(--sip-good);
+  border-color: rgba(76, 175, 80, 0.45);
+}
+
+/* 无内容解锁类：中性蓝灰，表示“无需下载” */
+.sip-dlc-row .v.unlock {
+  color: var(--sip-dim);
+  border-color: rgba(109, 130, 150, 0.55);
+}
+
+.sip-dlc-gtitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--sip-text);
+  border-bottom: 1px solid rgba(42, 71, 94, 0.6);
+  padding-bottom: 3px;
+}
+
+.sip-dlc-gtitle:first-child {
+  margin-top: 0;
+}
+
+.sip-dlc-gtitle em {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 10.5px;
+  color: var(--sip-dim);
+  margin-left: auto;
+}
+
+#sip-foot {
+  padding: 8px 12px 2px 12px;
+  font-size: 11px;
+  color: #6d8296;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+#sip-foot a {
+  color: #6d8296;
+}
+
+/* ---------- 面板内嵌设置（Steam 客户端环境用，不依赖选项页） ---------- */
+.sip-hide {
+  display: none !important;
+}
+
+#sip-set {
+  border-top: 1px solid var(--sip-border);
+  padding: 10px 12px 12px 12px;
+  background: #131c27;
+}
+
+.sip-set-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.sip-set-label {
+  flex: 0 0 92px;
+  font-size: 11px;
+  color: var(--sip-dim);
+}
+
+#sip-itad {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--sip-border);
+  background: #0e1620;
+  color: var(--sip-text);
+  font-size: 12px;
+}
+
+.sip-set-btn {
+  background: var(--sip-ok);
+  color: #131c27;
+  border: 0;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sip-set-btn:hover {
+  filter: brightness(1.12);
+}
+
+.sip-set-btn2 {
+  background: var(--sip-border);
+  color: var(--sip-text);
+}
+
+.sip-set-btn-wide {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  text-decoration: none;
+  background: var(--sip-accent, #4a90d9);
+  color: #fff;
+  padding: 7px 12px;
+  font-size: 12px;
+  cursor: context-menu; /* 提示此元素适合右键「在新选项卡中打开链接」 */
+}
+
+.sip-set-hint {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--sip-dim);
+  margin: 4px 0 0;
+}
+
+.sip-set-sep {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sip-accent, #c39bd3);
+  margin: 10px 0 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sip-set-stat {
+  font-size: 11px;
+  color: var(--sip-dim);
+  margin-top: 2px;
+}
+
+.sip-err {
+  color: var(--sip-bad);
+  margin-top: 4px;
+}
