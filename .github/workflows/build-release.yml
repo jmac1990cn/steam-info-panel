@@ -72,7 +72,7 @@ jobs:
           fi
           pip install crx3 >/dev/null 2>&1
           printf '%s' "$CRX_PRIVATE_KEY" > key.pem
-          crx3 create -pk key.pem -o "steam-info-panel-${{ steps.meta.outputs.version }}.crx" "_pkg/steam-info-panel"
+          crx3 create -pk key.pem -o "./steam-info-panel-${{ steps.meta.outputs.version }}.crx" "_pkg/steam-info-panel"
           ls -lh "steam-info-panel-${{ steps.meta.outputs.version }}.crx"
 
       - name: 发布到 GitHub Release
