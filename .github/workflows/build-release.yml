@@ -62,6 +62,16 @@ jobs:
           (cd _pkg && zip -r "../steam-info-panel-${VER}.zip" steam-info-panel/)
           ls -lh "steam-info-panel-${VER}.zip"
 
+      - name: 生成 CRX（需 CRX_PRIVATE_KEY secret，保持固定扩展 ID）
+        if: ${{ secrets.CRX_PRIVATE_KEY != '' }}
+        env:
+          CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
+        run: |
+          pip install crx3 >/dev/null 2>&1
+          printf '%s' "$CRX_PRIVATE_KEY" > key.pem
+          crx3 create -pk key.pem -o "steam-info-panel-${{ steps.meta.outputs.version }}.crx" "_pkg/steam-info-panel"
+          ls -lh "steam-info-panel-${{ steps.meta.outputs.version }}.crx"
+
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -70,11 +80,20 @@ jobs:
           body: |
             ## 自动构建发布（GitHub Actions）
 
-            下载附件 `steam-info-panel-${{ steps.meta.outputs.version }}.zip`，解压后在浏览器扩展管理页
-            （`chrome://extensions`，开启「开发者模式」）点「加载已解压的扩展程序」选中解压出的
-            `steam-info-panel` 目录即可。
+            ### 安装方式
+            - **侧载（推荐）**：下载 `steam-info-panel-${{ steps.meta.outputs.version }}.zip`，解压后在浏览器扩展管理页
+              （`chrome://extensions`，开启「开发者模式」）点「加载已解压的扩展程序」选中解压出的 `steam-info-panel` 目录。
+            - **CRX（固定扩展 ID）**：若仓库配置了 `CRX_PRIVATE_KEY` secret，本发布同时附带
+              `steam-info-panel-${{ steps.meta.outputs.version }}.crx`（与本地 `.pem` 对应，扩展 ID 固定，设置/缓存可跨版本保留）。
 
-            > 仓库内不含 `.pem` 打包私钥，本发布仅提供 zip 侧载包（无需 CRX）。
+            > 仓库源码内不含 `.pem` 打包私钥；CRX 由 CI 使用仓库 Secrets 中的私钥现生成，私钥不进入代码仓库。
           files: steam-info-panel-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 追加 CRX 到 Release（如已生成）
+        if: ${{ secrets.CRX_PRIVATE_KEY != '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.meta.outputs.tag }}" "steam-info-panel-${{ steps.meta.outputs.version }}.crx" --repo "${{ github.repository }}"

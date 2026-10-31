@@ -128,7 +128,7 @@ steam-info-panel/
 - 包内 `manifest.json` 的 `version` 会被自动同步为该次 tag 的版本号
 - 产物为 zip 侧载包（非 CRX）；安装方式见上方「安装 → A」
 
-> 如需 CRX 打包（保持固定扩展 ID），需把本地 `steam-info-panel.pem` 内容存入仓库 Secrets（`CRX_PRIVATE_KEY`）后扩展 workflow —— 当前未启用，因为公开仓库不宜托管私钥，且 Chrome 已禁止 crx 拖拽安装，zip 侧载即可。
+> **CRX 自动打包已启用**：把本地 `steam-info-panel.pem` 内容存入仓库 Secrets（`CRX_PRIVATE_KEY`），CI 即自动生成 `steam-info-panel-X.Y.Z.crx` 一并发布（扩展 ID 与本地 `.pem` 一致，设置/缓存可跨版本保留）。私钥仅存于 Secrets，不进代码仓库。Chrome 仍禁止 crx 拖拽安装，CRX 适用于企业策略 / 特定宿主（如 Steam 客户端 Extendium）等场景；普通用户推荐用上方 zip 侧载。
 
 ### 发布步骤
 
