@@ -1,0 +1,80 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（不含前导 v），例如 1.0.9'
+        required: true
+        default: '1.0.9'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 解析版本并确保 tag（仅手动触发）
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ github.event.inputs.version }}"
+            TAG="v${VER}"
+            if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git tag "$TAG"
+              git push origin "$TAG"
+            fi
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VER="${TAG#v}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: 将版本号写入 manifest
+        run: |
+          python3 - <<'PY'
+          import json
+          with open('manifest.json', 'r', encoding='utf-8') as f:
+              m = json.load(f)
+          m['version'] = '${{ steps.meta.outputs.version }}'
+          with open('manifest.json', 'w', encoding='utf-8') as f:
+              json.dump(m, f, ensure_ascii=False, indent=2)
+              f.write('\n')
+          PY
+
+      - name: 打包为 zip（排除开发产物）
+        run: |
+          VER="${{ steps.meta.outputs.version }}"
+          rm -rf _pkg && mkdir -p _pkg/steam-info-panel
+          rsync -a --exclude='.git' --exclude='.github' --exclude='backup' \
+            --exclude='dist' --exclude='DEVLOG.md' --exclude='*.pem' \
+            --exclude='_pkg' ./ _pkg/steam-info-panel/
+          (cd _pkg && zip -r "../steam-info-panel-${VER}.zip" steam-info-panel/)
+          ls -lh "steam-info-panel-${VER}.zip"
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Steam 游戏速查面板 v${{ steps.meta.outputs.version }}
+          body: |
+            ## 自动构建发布（GitHub Actions）
+
+            下载附件 `steam-info-panel-${{ steps.meta.outputs.version }}.zip`，解压后在浏览器扩展管理页
+            （`chrome://extensions`，开启「开发者模式」）点「加载已解压的扩展程序」选中解压出的
+            `steam-info-panel` 目录即可。
+
+            > 仓库内不含 `.pem` 打包私钥，本发布仅提供 zip 侧载包（无需 CRX）。
+          files: steam-info-panel-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

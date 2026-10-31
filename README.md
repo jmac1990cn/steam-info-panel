@@ -118,3 +118,26 @@ steam-info-panel/
 - 跨域访问：`store.steampowered.com`、`api.steampowered.com`、`www.cheapshark.com`、`steamdb.info`、`www.pcgamingwiki.com`、`catalog.gamepass.com`、`displaycatalog.mp.microsoft.com`、`api.isthereanydeal.com`
 
 缓存时效：价格 6 小时 · 库存 10 分钟 · DLC / GamePass 12 小时 · DRM 24 小时 · Epic 免费 24 小时 · Game Pass 目录每 7 天更新。
+
+## 自动构建与发布
+
+本仓库已配置 GitHub Actions（`.github/workflows/build-release.yml`）：**给仓库打 `vX.Y.Z` 格式的 tag 并推送，CI 会自动打包 `steam-info-panel-X.Y.Z.zip` 并发布到 [Releases](https://github.com/jmac1990cn/steam-info-panel/releases)**。也可在 Actions 页面手动触发（填入版本号）。
+
+- 打包内容：源码整目录压缩（`manifest.json` / `*.js` / `*.html` / `*.css` / `xgp-catalog.json` / `icons/`）
+- 自动排除：`dist/`、`backup/`、`DEVLOG.md`、`.pem` 私钥、`.git`、`.github`
+- 包内 `manifest.json` 的 `version` 会被自动同步为该次 tag 的版本号
+- 产物为 zip 侧载包（非 CRX）；安装方式见上方「安装 → A」
+
+> 如需 CRX 打包（保持固定扩展 ID），需把本地 `steam-info-panel.pem` 内容存入仓库 Secrets（`CRX_PRIVATE_KEY`）后扩展 workflow —— 当前未启用，因为公开仓库不宜托管私钥，且 Chrome 已禁止 crx 拖拽安装，zip 侧载即可。
+
+### 发布步骤
+
+```bash
+# 本地改完代码后
+git add -A && git commit -m "描述"
+git push
+
+# 打 tag 即触发自动构建与发布
+git tag v1.0.10
+git push origin v1.0.10
+```
