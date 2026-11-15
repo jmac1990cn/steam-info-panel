@@ -1,6 +1,6 @@
 # Steam 游戏速查面板 · Chrome / Steam 客户端扩展
 
-打开任意 Steam 商店游戏页时，在页面右侧自动插入一个信息面板，展示六项内容：
+打开任意 Steam 商店游戏页时，在页面右侧自动插入一个信息面板，展示七项内容：
 
 | # | 功能 | 数据源 | 说明 |
 |---|------|--------|------|
@@ -10,6 +10,7 @@
 | 4 | 是否在 XGP 会员库 | 内置 Game Pass 目录（631 款）+ 每周自动更新 | 本地离线比对，命中即显示匹配的目录名称 |
 | 5 | 是否有 D 加密 | **Steam 商店页官方披露节点**（`div.DRM_notice`，零网络） | 直接读 Valve 强制发行商填写的「包含第三方 DRM: …」字段；无该节点即未披露。PCGamingWiki / SteamDB 仅在页面未就绪时兜底 |
 | 6 | 是否在 Epic 免费过 | **ITAD 赠送记录**（IsThereAnyDeal，需自备 key） | 需在设置中填入自己的 ITAD API key（免费申请：<https://isthereanydeal.com/apps/my/>）。由 Steam appid 定位游戏身份，查 ITAD 该游戏的 Epic 历史赠送记录（覆盖 2018 年起每周喜加一）；判定 shop 是否为 Epic（新记录 `shop.id=16`、早期记录 `shop` 为 null 且标题含「Epic」）。命中即显示「曾免费 / 当前免费中 / 即将免费」+ 次数与时段，附领取链接。免登录 |
+| 7 | Steam Deck 帧数 | **Steam 官方 Deck 兼容性报告**（`ajaxgetdeckappcompatibilityreport` 接口 + 商店页 DOM，零 / 少网络） | Steam 于 2026-11-09 在商店页「Steam Deck 兼容性 → 了解更多」下新增玩家实测平均帧率统计（覆盖已通过 Deck 兼容性测试的的游戏）。兼容性结论（已验证 / 可玩 / 不支持）走接口 `resolved_category`；平均帧率优先抓页面实际渲染的 FPS 文本，接口 `frame_resolved_items` 仅作「是否已收录」补充。仅对已评级且样本达标的游戏展示帧率，部分游戏会显示「已收录但未抓到具体数值」或「样本不足未展示」 |
 
 ## 安装
 
@@ -117,7 +118,7 @@ steam-info-panel/
 - `storage`、`alarms`
 - 跨域访问：`store.steampowered.com`、`api.steampowered.com`、`www.cheapshark.com`、`steamdb.info`、`www.pcgamingwiki.com`、`catalog.gamepass.com`、`displaycatalog.mp.microsoft.com`、`api.isthereanydeal.com`
 
-缓存时效：价格 6 小时 · 库存 10 分钟 · DLC / GamePass 12 小时 · DRM 24 小时 · Epic 免费 24 小时 · Game Pass 目录每 7 天更新。
+缓存时效：价格 6 小时 · 库存 10 分钟 · DLC / GamePass 12 小时 · DRM 24 小时 · Epic 免费 24 小时 · Steam Deck 帧数 24 小时 · Game Pass 目录每 7 天更新。
 
 ## 自动构建与发布
 
@@ -138,6 +139,6 @@ git add -A && git commit -m "描述"
 git push
 
 # 打 tag 即触发自动构建与发布
-git tag v1.0.10
-git push origin v1.0.10
+git tag v1.1.0
+git push origin v1.1.0
 ```

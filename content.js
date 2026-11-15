@@ -1,6 +1,6 @@
 /* ===========================================================
  * Steam 游戏速查面板 —— 内容脚本
- * 在 Steam 商店游戏页注入侧边面板，展示 5 项信息
+ * 在 Steam 商店游戏页注入侧边面板，展示 7 项信息
  * =========================================================== */
 
 (function () {
@@ -60,6 +60,7 @@
     { key: "xgp", label: "是否在 XGP 会员库", hint: "Xbox Game Pass 目录比对" },
     { key: "drm", label: "是否有 D 加密", hint: "Denuvo / DRM 检测" },
     { key: "epic", label: "是否在 Epic 免费过", hint: "Epic 历史免费记录（ITAD 数据源）" },
+    { key: "deck", label: "Steam Deck 帧数", hint: "Steam Deck 上玩家实测平均帧率" },
   ];
 
   const panel = document.createElement("div");
@@ -85,7 +86,7 @@
         </div>`
       ).join("")}
       <div id="sip-foot">
-        <span>数据源：CheapShark / Steam / PCGamingWiki / SteamDB / GamePass / Epic</span>
+        <span>数据源：CheapShark / Steam / PCGamingWiki / SteamDB / GamePass / Epic / Steam Deck 兼容性报告</span>
         <a href="#" id="sip-refresh" title="清除缓存并重新检测">重新检测</a>
         <a href="#" id="sip-set-toggle" title="面板内设置">⚙ 设置</a>
       </div>
@@ -708,6 +709,127 @@
     render("epic", badge, cls, sub, detail);
   }
 
+  /* ---------- 7. Steam Deck 帧数（读商店页 DOM，零网络） ---------- */
+  // Steam 商店页是 React 异步渲染：等 Deck 兼容性区块就绪（含帧率展示）
+  async function waitDeckReady(timeout) {
+    const NODE =
+      ".steamdeck_compat, #steamDeckCompat, [class*='deck_compat'], [class*='DeckCompat'], " +
+      ".deck_verdict, #deckCompatSection, .game_area_deck_compat";
+    const t0 = Date.now();
+    const lim = timeout || 5000;
+    while (Date.now() - t0 < lim) {
+      if (document.querySelector(NODE)) return;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+
+  // 抓商店页「Steam Deck 兼容性」区块上 Steam 实际渲染的平均帧率文本
+  function scanDomDeck() {
+    const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+    let scope = null;
+    const scopeSel = [
+      ".steamdeck_compat",
+      "#steamDeckCompat",
+      "[class*='deck_compat']",
+      "[class*='DeckCompat']",
+      ".deck_verdict_block",
+      "#deckCompatSection",
+      ".game_area_deck_compat",
+    ];
+    for (const s of scopeSel) {
+      const el = document.querySelector(s);
+      if (el) {
+        scope = el;
+        break;
+      }
+    }
+    // 兜底：找含「Steam Deck 兼容性 / Deck 兼容性」文本的最小容器
+    if (!scope) {
+      const all = document.querySelectorAll("div, section, article");
+      for (const el of all) {
+        const t = norm(el.innerText || "");
+        if (t && t.length < 500 && /Steam\s*Deck\s*兼容性|Deck\s*兼容性/.test(t)) {
+          scope = el;
+          break;
+        }
+      }
+    }
+
+    const dom = { found: false, fps: null, fpsText: null, updated: null, hasHistogram: false, verdict: null };
+    if (!scope) return dom;
+    dom.found = true;
+
+    const txt = norm(scope.innerText || scope.textContent || "");
+
+    // 帧率：抓「（平均）数字 FPS」；优先匹配带平均语义的，其次裸数字+单位
+    let m =
+      txt.match(/平均帧率\s*[:：]?\s*(\d{1,3})\s*FPS/i) ||
+      txt.match(/平均\s*(\d{1,3})\s*FPS/i) ||
+      txt.match(/(\d{1,3})\s*FPS/i);
+    if (m) {
+      dom.fps = Number(m[1]);
+      dom.fpsText = m[1] + " FPS";
+    }
+
+    // 直方图/分布存在性（Steam 会在帧率区渲染条状结构或 canvas）
+    dom.hasHistogram =
+      /帧率分布|fps\s*分布|histogram|分布图/i.test(txt) ||
+      !!scope.querySelector("canvas, [class*='histogram'], [class*='Histogram']");
+
+    // 更新日期：最后更新 2026-xx-xx
+    const dm = txt.match(/(?:最后更新|更新于|last\s*updated)\s*[:：]?\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/i);
+    if (dm) dom.updated = dm[1];
+
+    // 兼容性结论文本（已验证/可玩/不支持）
+    const vm = txt.match(/(已验证|可玩|不支持|未评级|Verified|Playable|Unsupported)/i);
+    if (vm) dom.verdict = vm[1];
+
+    return dom;
+  }
+
+  async function loadDeck() {
+    await waitDeckReady();
+    const dom = scanDomDeck();
+    const r = await ask("deck", { appid, dom });
+
+    const cat = r.categoryText || (r.domVerdict || "");
+    let badge = "无数据",
+      cls = "b-load",
+      sub = "Steam 未提供 Deck 帧率";
+
+    if (r.fps != null) {
+      badge = r.fps + " FPS";
+      cls = "b-ok";
+      sub = "Steam Deck 平均帧率 " + r.fps + " FPS" + (cat ? "（兼容性：" + cat + "）" : "");
+    } else if (r.categoryText) {
+      badge = r.categoryText;
+      cls = r.category === 3 ? "b-ok" : r.category === 2 ? "b-info" : r.category === 1 ? "b-bad" : "b-load";
+      sub = "Deck 兼容性：" + r.categoryText + (r.frameAvailable ? " · 已收录帧率但未抓到数值" : " · 暂未展示帧率");
+    } else if (r.tested === false) {
+      badge = "未评级";
+      cls = "b-load";
+      sub = "Steam 未提供该游戏的 Deck 兼容性 / 帧率数据";
+    } else if (r.frameAvailable) {
+      badge = "已收录";
+      cls = "b-info";
+      sub = "Steam 已收录帧率，但页面未抓取到具体数值";
+    }
+
+    const detail = `
+      <div class="sip-kv"><span>兼容性</span><span>${r.categoryText ? esc(r.categoryText) : (r.domVerdict ? esc(r.domVerdict) : "未评级 / 未提供")}</span></div>
+      <div class="sip-kv"><span>平均帧率</span><span>${
+        r.fps != null ? `<b>${r.fps} FPS</b>${r.fpsText && r.fpsText !== r.fps + " FPS" ? "（" + esc(r.fpsText) + "）" : ""}${r.fromApi ? " <em style='color:#8ba6bd'>接口估算</em>" : ""}` : r.frameAvailable ? "已收录，未抓到数值" : "未提供"
+      }</span></div>
+      <div class="sip-kv"><span>帧率分布</span><span>${r.hasHistogram ? "有直方图" : "无 / 未检出"}</span></div>
+      <div class="sip-kv"><span>最后更新</span><span>${r.updated ? esc(r.updated) : "—"}</span></div>
+      <div class="sip-kv"><span>数据来源</span><span>${r.source ? esc(r.source) : "Steam Deck 兼容性报告"}</span></div>
+      ${r.note ? `<div style="margin-top:6px;color:#e0a85a">提示：${esc(r.note)}</div>` : ""}
+      <div style="margin-top:6px"><a href="https://store.steampowered.com/saleaction/GetDeckCompatibilityReport/${appid}" target="_blank" rel="noreferrer">在商店页「Steam Deck 兼容性 → 了解更多」查看帧率直方图 →</a></div>
+      ${r.errors && r.errors.length ? `<div class="sip-err">${r.errors.map(esc).join("<br>")}</div>` : ""}`;
+
+    render("deck", badge, cls, sub, detail);
+  }
+
   /* ---------- 执行 ---------- */
   async function runAll() {
     ITEMS.forEach((it) => {
@@ -722,6 +844,7 @@
     loadXgp();
     loadDrm();
     loadEpic();
+    loadDeck();
   }
 
   runAll();

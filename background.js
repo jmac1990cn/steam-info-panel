@@ -21,6 +21,7 @@ const TTL = {
   drm: 24 * 3600 * 1000,
   epic: 24 * 3600 * 1000,
   epicFail: 10 * 60 * 1000,
+  deck: 24 * 3600 * 1000,
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1087,6 +1088,112 @@ async function getEpicGiveaways(appid) {
 }
 
 /* ===========================================================
+ * 7. Steam Deck 上的可用帧数（2026-11-09 Steam 官方新功能）
+ * 数据源：Steam Deck 兼容性报告接口（结构化结论 + 帧率可用性）
+ *        + 商店页 DOM 上 Steam 实际渲染的平均帧率文本（最忠实于页面显示）
+ * 说明：
+ *   - 兼容性结论（已验证/可玩/不支持）走接口 resolved_category（1/2/3），干净可靠；
+ *   - 帧率数值优先抓商店页 DOM 上 Steam 展示的「平均 X FPS」（正是用户看到的数），
+ *     接口 frame_resolved_items 仅作「是否已收录帧率」的判定补充（其内部结构随版本变动，不依赖）。
+ *   - 仅对已通过 Deck 兼容性测试（已验证/可玩/不支持）且样本达标的游戏展示帧率。
+ * =========================================================== */
+async function getDeckReport(appid) {
+  const url = `https://store.steampowered.com/saleaction/ajaxgetdeckappcompatibilityreport?nAppID=${appid}&l=schinese`;
+  return await http(url, { json: true, timeout: 12000 });
+}
+
+// 尽力从接口返回里抽取一个帧率数值（frame_resolved_items 内部结构不公开，仅作兜底）
+function extractApiFps(res) {
+  try {
+    const items = (res && (res.frame_resolved_items || res.frameResolvedItems)) || [];
+    const hay = JSON.stringify(items);
+    // 优先匹配显式字段： "fps":45 / "average":45 / "framerate":45
+    let m = hay.match(/"fps"\s*:\s*(\d{2,3})/i) ||
+            hay.match(/"average"\s*:\s*(\d{2,3})/i) ||
+            hay.match(/"framerate"\s*:\s*(\d{2,3})/i);
+    if (m) return Number(m[1]);
+  } catch (e) {}
+  return null;
+}
+
+const DECK_CAT = { 3: "已验证", 2: "可玩", 1: "不支持", 0: "未评级" };
+
+async function getDeck(appid, dom) {
+  const key = "deck:" + appid;
+  const hit = await cacheGet(key);
+  if (hit) return hit;
+
+  const out = {
+    category: null, // 1=不支持 2=可玩 3=已验证 0=未评级
+    categoryText: null,
+    tested: false,
+    frameAvailable: false,
+    fps: null,
+    fpsText: null,
+    updated: null,
+    hasHistogram: false,
+    fromApi: false,
+    source: null,
+    note: null,
+    errors: [],
+  };
+
+  // ① 商店页 DOM 抓取（最忠实于页面显示的平均帧率）
+  if (dom && dom.found) {
+    if (dom.fps != null) {
+      out.fps = dom.fps;
+      out.fpsText = dom.fpsText;
+    }
+    if (dom.updated) out.updated = dom.updated;
+    out.hasHistogram = !!dom.hasHistogram;
+    if (dom.verdict) out.domVerdict = dom.verdict;
+  }
+
+  // ② 接口：结构化结论 + 帧率可用性
+  try {
+    const j = await getDeckReport(appid);
+    const res = (j && j.results) || null;
+    if (res) {
+      const cat = res.resolved_category;
+      out.tested = cat != null && cat !== 0;
+      out.category = cat;
+      out.categoryText = DECK_CAT[cat] || null;
+      const frameCat = res.frame_resolved_category;
+      const frameItems = res.frame_resolved_items;
+      out.frameAvailable =
+        frameCat != null || (Array.isArray(frameItems) && frameItems.length > 0);
+      out.source = "Steam Deck 兼容性报告（官方接口 + 商店页 DOM）";
+      // DOM 没抓到数但接口确认有帧率数据时，尽力从接口补一个
+      if (out.fps == null && out.frameAvailable) {
+        const apiFps = extractApiFps(res);
+        if (apiFps != null) {
+          out.fps = apiFps;
+          out.fpsText = apiFps + " FPS（接口）";
+          out.fromApi = true;
+        }
+      }
+    } else {
+      out.errors.push("Steam Deck 兼容性接口未返回数据");
+    }
+  } catch (e) {
+    out.errors.push("Steam Deck 兼容性接口失败：" + httpHint(e));
+  }
+
+  // ③ 状态判定（无帧率数值时的解释文案）
+  if (out.fps == null && out.frameAvailable) {
+    out.note =
+      "Steam 已收录该游戏帧率数据，但页面未抓取到具体数值（可在商店页「Steam Deck 兼容性 → 了解更多」查看直方图）";
+  } else if (out.fps == null && out.tested && !out.frameAvailable) {
+    out.note = "Steam Deck 已评级，但暂未展示帧率（样本不足或未达统计阈值）";
+  } else if (out.fps == null && !out.tested) {
+    out.note = "Steam 未提供该游戏的 Deck 兼容性 / 帧率数据";
+  }
+
+  await cacheSet(key, out, TTL.deck);
+  return out;
+}
+
+/* ===========================================================
  * 消息路由
  * =========================================================== */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -1113,6 +1220,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return await getDrm(msg.appid, msg.name, msg.dom);
       case "epic":
         return await getEpicGiveaways(msg.appid);
+      case "deck":
+        return await getDeck(msg.appid, msg.dom);
       case "getSettings": {
         const o = await chrome.storage.local.get("settings");
         return { settings: (o && o.settings) || {} };
@@ -1136,7 +1245,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return await ensureXgpFresh(!!msg.force);
       case "clearCache": {
         const all = await chrome.storage.local.get(null);
-        const keys = Object.keys(all).filter((k) => /^(price|owned|dlc|xgp|drm|epic):/.test(k));
+        const keys = Object.keys(all).filter((k) => /^(price|owned|dlc|xgp|drm|epic|deck):/.test(k));
         if (keys.length) await chrome.storage.local.remove(keys);
         return { cleared: keys.length };
       }
