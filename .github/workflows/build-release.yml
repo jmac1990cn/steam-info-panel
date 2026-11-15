@@ -91,9 +91,17 @@ jobs:
           body: |
             ## 自动构建发布（GitHub Actions）
 
-            > ⚠️ 这是 **测试版（beta）**，含 Steam Deck 帧率抓取的【调试诊断】面板。
-            > 若面板第 7 项仍显示「已收录帧率但未抓到数值」，请展开「调试信息（测试版 1.1.3-beta）」，
-            > 把其中「页面实际文本片段」与「接口 frame 字段」两段原样贴回，即可精准定位句式并修复。
+            > ⚠️ 这是 **测试版（beta）**。manifest 版本号为纯数字（可用 CRX 拖拽安装 / 覆盖更新），
+            > 「beta」仅作为发布渠道标识（体现在 tag 与 Release 名上）。
+
+            ### 安装方式
+            - **CRX 拖拽（更新）**：下载 `steam-info-panel-${{ steps.meta.outputs.version }}.crx` 拖入浏览器扩展页即可（扩展 ID 固定，旧版会自动覆盖更新）。
+            - **ZIP 侧载**：下载 `steam-info-panel-${{ steps.meta.outputs.version }}.zip` 解压，在 `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」，选中解压出的 `steam-info-panel` 文件夹。
+            - 装好后请点面板「重新检测」清除 24h 缓存。
+
+            ### Steam Deck 帧率调试
+            若功能 7 显示「无实测帧率 / 已收录帧率但未抓到数值」，展开其详情里的「调试信息」，
+            把「Steam 页面文本（已排除扩展面板）」「接口 frame 字段」「解析结果」三段原样贴回，即可精准定位。
 
             ### 安装方式
             - **侧载（推荐）**：下载 `steam-info-panel-${{ steps.meta.outputs.version }}.zip`，解压后在浏览器扩展管理页

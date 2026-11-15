@@ -1134,6 +1134,32 @@ function extractApiFps(res) {
 
 const DECK_CAT = { 3: "已验证", 2: "可玩", 1: "不支持", 0: "未评级" };
 
+// 【v1.1.4】frame_resolved_items 里可能并不是帧率数值，而是一条「为何没有帧率」的
+// 本地化说明 token（loc_token），例如 #SteamFrame_TestResult_UnsupportedAntiCheatConfiguration。
+// 识别它，避免把「Steam 明确没给数据」误报成「已收录帧率却未抓到数值」。
+function parseFrameReason(frameItems) {
+  if (!Array.isArray(frameItems)) return null;
+  const tokens = frameItems
+    .map((it) => (it && (it.loc_token || it.locToken || it.token || "")) || "")
+    .filter(Boolean)
+    .join(" | ");
+  if (!tokens) return null;
+  if (/AntiCheat/i.test(tokens)) return "反作弊配置不支持，Steam 未提供该游戏的 Deck 实测帧率";
+  if (/Unsupported|Incompatible|NotSupported/i.test(tokens)) return "该配置不受 Deck 帧率测试支持，Steam 未展示帧率";
+  if (/NoData|NotTested|Insufficient|NotEnough|NoResults|Pending/i.test(tokens)) return "样本不足 / 未完成测试，Steam 暂未展示帧率";
+  return null; // 未知 token：不武断判定，交回诊断面板让用户贴原文
+}
+
+// frame_resolved_items 里是否真含数值型帧率数据（区别于纯说明 token）
+function frameItemsHaveNumeric(frameItems) {
+  if (!Array.isArray(frameItems)) return false;
+  const hay = JSON.stringify(frameItems);
+  return (
+    /"(?:fps|framerate|frame_rate|frameRate|average|avg|frames|value|min|max)"\s*:\s*\d/i.test(hay) ||
+    /\d{2,3}\s*FPS/i.test(hay)
+  );
+}
+
 async function getDeck(appid, dom) {
   const key = "deck:" + appid;
   const hit = await cacheGet(key);
@@ -1144,6 +1170,7 @@ async function getDeck(appid, dom) {
     categoryText: null,
     tested: false,
     frameAvailable: false,
+    frameReason: null,
     fps: null,
     fpsText: null,
     updated: null,
@@ -1176,8 +1203,12 @@ async function getDeck(appid, dom) {
       out.categoryText = DECK_CAT[cat] || null;
       const frameCat = res.frame_resolved_category;
       const frameItems = res.frame_resolved_items;
+      // 【v1.1.4】只有「数值型帧率数据」才算已收录；若接口只给了「为何没帧率」的说明 token，
+      // 则记为 frameReason，不再误判成 frameAvailable。
+      const numeric = frameItemsHaveNumeric(frameItems);
+      if (out.fps == null && !numeric) out.frameReason = parseFrameReason(frameItems);
       out.frameAvailable =
-        frameCat != null || (Array.isArray(frameItems) && frameItems.length > 0);
+        numeric || (out.fps == null && !out.frameReason && frameCat != null);
       out.source = "Steam Deck 兼容性报告（官方接口 + 商店页 DOM）";
       // 测试版诊断：把接口里 frame 相关字段原样截出来，便于排查「已收录却抓不到数值」
       try {
@@ -1202,7 +1233,9 @@ async function getDeck(appid, dom) {
   }
 
   // ③ 状态判定（无帧率数值时的解释文案）
-  if (out.fps == null && out.frameAvailable) {
+  if (out.fps == null && out.frameReason) {
+    out.note = out.frameReason;
+  } else if (out.fps == null && out.frameAvailable) {
     out.note =
       "Steam 已收录该游戏帧率数据，但页面未抓取到具体数值（可在商店页「Steam Deck 兼容性 → 了解更多」查看直方图）";
   } else if (out.fps == null && out.tested && !out.frameAvailable) {

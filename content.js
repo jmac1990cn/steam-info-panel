@@ -723,30 +723,47 @@
     }
   }
 
-  // 抓商店页上 Steam 实际渲染的平均帧率文本（如「平均帧率为 58 FPS」「最后更新于 2026年11月9日」）
-  // 关键修正：
-  //  · 用 document.documentElement.textContent（含折叠/异步区块文本；innerText 对未展开区块返回空）
-  //  · 不依赖具体 class 选择器（Steam 类名常变，且会锁死在片段文本上）
-  //  · 由 loadDeck 先轮询等待帧率文本注入，再一次性全页解析
+  // 抓商店页上 Steam 实际渲染的平均帧率文本（如「平均帧率为 58 FPS」）。
+  // 【v1.1.4 关键修复】此前用 document.documentElement.textContent，把扩展自己注入的
+  // #sip-panel 也算进去了（面板被插在 rightcol 最前面，文字排在全页最靠前），导致：
+  //   · 等待/解析探针命中面板自己的「平均帧率 / Steam Deck 帧数」字样 → 秒返回、锚点被抢占；
+  //   · 诊断片段里全是面板文字，看不到 Steam 真实文本。
+  // 现在改用 TreeWalker 式遍历：跳过 #sip-panel 与 script/style/noscript/template，
+  // 只收集页面可见文本节点并用空格拼接，从根上排除自污染与内联脚本源码干扰。
   function getDeckFullText() {
-    return document.documentElement.textContent || document.body.textContent || "";
+    const parts = [];
+    const stack = [document.body || document.documentElement];
+    const SKIP = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|IFRAME)$/;
+    while (stack.length) {
+      const n = stack.pop();
+      if (!n) continue;
+      if (n.nodeType === 3) {
+        if (n.nodeValue) parts.push(n.nodeValue);
+        continue;
+      }
+      if (n.nodeType !== 1) continue;
+      if (n.id === PANEL_ID) continue; // 排除扩展自身面板
+      if (SKIP.test(n.tagName || "")) continue; // 排除脚本/样式源码文本
+      const kids = n.childNodes;
+      for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+    }
+    return parts.join(" ").replace(/\s+/g, " ").trim();
   }
 
-  // 从全页文本中抽取 Steam Deck 平均帧率数值（最忠实于页面显示的数）。
-  // 容错覆盖多种真实句式：
-  //   中文「平均帧率 / 平均帧数」、英文「Average frame rate」、带小数「58.2 FPS」、
-  //   数字与 FPS 之间隔了较多文字（窗口放宽到 200 字符）。
-  // 仍不采信系统需求里的「60 FPS」：锚点/语境必须出现 平均/帧率/帧数/fps/frame/deck 任一关键词。
+  // 从「干净」全页文本中抽取 Steam Deck 平均帧率数值。
+  // 【v1.1.4】遍历所有「平均/帧率/帧数/Average frame rate」锚点（不再只取第一个，
+  // 避免个别无数值的锚点抢占），每个锚点后 200 字符内找「数字 FPS」；再走语境兜底。
+  // 仍不采信系统需求里的「60 FPS」：语境必须出现 平均/帧率/帧数/fps/frame/deck 任一关键词。
   function parseDeckFps(full) {
     let fps = null, fpsText = null;
-    const NUM = /(\d{1,4}(?:\.\d+)?)/;
 
-    // 锚点1：中文「平均」+（帧率|帧数|fps|frame）+ 之后 200 字符内第一个「数字 FPS」
-    const a = full.search(/平均.{0,10}(帧率|帧数|fps|frame\s*rate)|average\s*frame\s*rate/i);
-    if (a >= 0) {
-      const seg = full.slice(a, a + 200);
+    // 锚点1：遍历所有帧率语境锚点，各取其后 200 字符内第一个「数字 FPS」
+    const anchorRe = /平均.{0,12}(?:帧率|帧数|fps|frame\s*rate)|average\s*frame\s*rate/gi;
+    let am;
+    while ((am = anchorRe.exec(full))) {
+      const seg = full.slice(am.index, am.index + 200);
       const m = seg.match(/(\d{1,4}(?:\.\d+)?)\s*FPS/i);
-      if (m) { fps = Number(m[1]); fpsText = m[0]; }
+      if (m) { fps = Number(m[1]); fpsText = m[0]; break; }
     }
 
     // 锚点2：任意「数字 FPS」，其前 80 字符出现 平均/帧率/帧数/fps/frame/deck 语境才采信
@@ -764,14 +781,24 @@
     return { fps, fpsText };
   }
 
-  // 诊断：截取 Steam 页面上「帧率/平均/FPS/Deck」附近的真实文本片段，供测试版排查。
-  // 若仍抓不到数值，把这段原样贴回即可精准定位句式。
+  // 诊断（v1.1.4 增强）：基于「已排除扩展面板」的干净文本，输出：
+  //   ① 文本长度；② 帧率关键词附近片段；③ 页面里所有「数字 FPS」命中及其前文（最多 8 条）。
+  // 若 ③ 为「无」，即可一锤定音：Steam 页面 DOM 文本里根本没渲染帧率数字（数值可能画在 canvas 里）。
   function deckDebugSnippet(full) {
-    const idx = full.search(/平均|帧率|帧数|fps|frame\s*rate|steam\s*deck/i);
-    if (idx < 0) {
-      return "(未命中任何关键词：页面文本中找不到 平均/帧率/帧数/FPS/Frame/Steam Deck —— 可能脚本过早运行或该区块未渲染)";
+    const hits = [];
+    const re = /\d{1,4}(?:\.\d+)?\s*FPS/gi;
+    let m;
+    while ((m = re.exec(full)) && hits.length < 8) {
+      hits.push("…" + full.slice(Math.max(0, m.index - 36), m.index) + "【" + m[0] + "】");
     }
-    return full.slice(Math.max(0, idx - 30), idx + 220).replace(/\s+/g, " ").trim();
+    const idx = full.search(/平均|帧率|帧数|fps|frame\s*rate|steam\s*deck/i);
+    const snippet = idx < 0
+      ? "(干净文本中未命中任何帧率关键词)"
+      : full.slice(Math.max(0, idx - 30), idx + 220);
+    return "干净文本长度=" + full.length +
+      "\n帧率区片段：" + snippet +
+      "\n页面所有 FPS 命中(" + hits.length + "条)：" +
+      (hits.length ? "\n  " + hits.join("\n  ") : "无（Steam 页面 DOM 文本里没有任何「数字 FPS」）");
   }
 
   function parseDeckDate(full) {
@@ -781,13 +808,13 @@
     return dm ? dm[1] : null;
   }
 
-  // 轮询等待帧率文本出现在全页文本中（Steam 商店页帧率区为异步注入），超时上限 lim
-  // 放宽判定：等待真正的「平均…（帧率/帧数/fps/frame）」或任意一个「数字 FPS」出现，
-  // 避免只认「帧率」二字而漏掉「平均帧数 / Average frame rate」等真实句式。
+  // 轮询等待 Steam 帧率文本注入。【v1.1.4 关键修复】探针必须见到真正的「数字 FPS」，
+  // 不能再被「帧率 / 帧数」这类字样满足 —— 否则扩展面板自身的「Steam Deck 帧数 /
+  // 实测平均帧率」会让等待秒返回，扫描发生在 Steam 异步帧率区渲染之前。
   async function waitForDeckFps(lim) {
     lim = lim || 12000;
     const t0 = Date.now();
-    const probe = /(平均.{0,10}(帧率|帧数|fps|frame))|(\d{1,4}(?:\.\d+)?\s*FPS)/i;
+    const probe = /\d{1,4}(?:\.\d+)?\s*FPS/i;
     while (Date.now() - t0 < lim) {
       if (probe.test(getDeckFullText())) return true;
       await new Promise((r) => setTimeout(r, 200));
@@ -823,6 +850,11 @@
       badge = r.fps + " FPS";
       cls = "b-ok";
       sub = "Steam Deck 平均帧率 " + r.fps + " FPS" + (cat ? "（兼容性：" + cat + "）" : "");
+    } else if (r.frameReason) {
+      // 接口明确说明「为何没有帧率」（如反作弊不支持/未测试），不再说「已收录却未抓到」误导用户
+      badge = "无实测帧率";
+      cls = "b-load";
+      sub = r.frameReason + (cat ? "（兼容性：" + cat + "）" : "");
     } else if (r.categoryText) {
       badge = r.categoryText;
       cls = r.category === 3 ? "b-ok" : r.category === 2 ? "b-info" : r.category === 1 ? "b-bad" : "b-load";
@@ -840,17 +872,17 @@
     const detail = `
       <div class="sip-kv"><span>兼容性</span><span>${r.categoryText ? esc(r.categoryText) : (r.domVerdict ? esc(r.domVerdict) : "未评级 / 未提供")}</span></div>
       <div class="sip-kv"><span>平均帧率</span><span>${
-        r.fps != null ? `<b>${r.fps} FPS</b>${r.updated ? "（最后更新 " + esc(r.updated) + "）" : ""}${r.fromApi ? " <em style='color:#8ba6bd'>接口估算</em>" : ""}` : r.frameAvailable ? "已收录，未抓到数值" : "未提供"
+        r.fps != null ? `<b>${r.fps} FPS</b>${r.updated ? "（最后更新 " + esc(r.updated) + "）" : ""}${r.fromApi ? " <em style='color:#8ba6bd'>接口估算</em>" : ""}` : r.frameReason ? esc(r.frameReason) : r.frameAvailable ? "已收录，未抓到数值" : "未提供"
       }</span></div>
       <div class="sip-kv"><span>帧率分布</span><span>${r.hasHistogram ? "有直方图" : "无 / 未检出"}</span></div>
       <div class="sip-kv"><span>最后更新</span><span>${r.updated ? esc(r.updated) : "—"}</span></div>
       <div class="sip-kv"><span>数据来源</span><span>${r.source ? esc(r.source) : "Steam Deck 兼容性报告"}</span></div>
       ${r.note ? `<div style="margin-top:6px;color:#e0a85a">提示：${esc(r.note)}</div>` : ""}
       <div style="margin-top:6px"><a href="https://store.steampowered.com/saleaction/GetDeckCompatibilityReport/${appid}" target="_blank" rel="noreferrer">在商店页「Steam Deck 兼容性 → 了解更多」查看帧率直方图 →</a></div>
-      <details style="margin-top:8px"><summary style="cursor:pointer;color:#8ba6bd;font-size:12px">调试信息（测试版 1.1.3-beta）</summary>
-        <div class="sip-debug">页面实际文本片段：<br>${esc(dbgText)}</div>
+      <details style="margin-top:8px"><summary style="cursor:pointer;color:#8ba6bd;font-size:12px">调试信息（测试版 1.1.4-beta）</summary>
+        <div class="sip-debug">Steam 页面文本（已排除扩展面板）：<br>${esc(dbgText)}</div>
         ${r.debugApi ? `<div class="sip-debug">接口 frame 字段：${esc(r.debugApi)}</div>` : ""}
-        <div class="sip-debug">解析结果：fps=${r.fps != null ? r.fps : "null"} · frameAvailable=${r.frameAvailable} · found=${dom.found} · hasHistogram=${dom.hasHistogram}</div>
+        <div class="sip-debug">解析结果：fps=${r.fps != null ? r.fps : "null"} · frameAvailable=${r.frameAvailable} · frameReason=${r.frameReason ? esc(r.frameReason) : "null"} · found=${dom.found} · hasHistogram=${dom.hasHistogram}</div>
       </details>
       ${r.errors && r.errors.length ? `<div class="sip-err">${r.errors.map(esc).join("<br>")}</div>` : ""}`;
 
