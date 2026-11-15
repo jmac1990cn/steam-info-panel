@@ -1107,11 +1107,24 @@ function extractApiFps(res) {
   try {
     const items = (res && (res.frame_resolved_items || res.frameResolvedItems)) || [];
     const hay = JSON.stringify(items);
-    // 优先匹配显式字段： "fps":45 / "average":45 / "framerate":45
+    // ① 显式字段： "fps":45 / "average":45 / "framerate":45
     let m = hay.match(/"fps"\s*:\s*(\d{2,3})/i) ||
             hay.match(/"average"\s*:\s*(\d{2,3})/i) ||
             hay.match(/"framerate"\s*:\s*(\d{2,3})/i);
     if (m) return Number(m[1]);
+    // ② 字符串里直接带「数字 FPS」
+    const m2 = hay.match(/(\d{2,3})\s*FPS/i);
+    if (m2) return Number(m2[1]);
+    // ③ 兜底：任何 20–240 的数值字段，名字像帧率
+    for (const it of items) {
+      if (!it || typeof it !== "object") continue;
+      for (const k of Object.keys(it)) {
+        if (/fps|frame|framerate|perf|average/i.test(k)) {
+          const v = it[k];
+          if (typeof v === "number" && v >= 10 && v <= 240) return v;
+        }
+      }
+    }
   } catch (e) {}
   return null;
 }

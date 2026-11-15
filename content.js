@@ -716,7 +716,7 @@
       ".steamdeck_compat, #steamDeckCompat, [class*='deck_compat'], [class*='DeckCompat'], " +
       ".deck_verdict, #deckCompatSection, .game_area_deck_compat";
     const t0 = Date.now();
-    const lim = timeout || 5000;
+    const lim = timeout || 2000;
     while (Date.now() - t0 < lim) {
       if (document.querySelector(NODE)) return;
       await new Promise((r) => setTimeout(r, 150));
@@ -724,77 +724,73 @@
   }
 
   // 抓商店页上 Steam 实际渲染的平均帧率文本（如「平均帧率为 58 FPS」「最后更新于 2026年11月9日」）
-  // 不依赖具体 class：直接在全页文本里匹配句式，最稳。
-  function scanDomDeck() {
-    const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
-    const full = norm(document.body ? document.body.innerText : "");
+  // 关键修正：
+  //  · 用 document.documentElement.textContent（含折叠/异步区块文本；innerText 对未展开区块返回空）
+  //  · 不依赖具体 class 选择器（Steam 类名常变，且会锁死在片段文本上）
+  //  · 由 loadDeck 先轮询等待帧率文本注入，再一次性全页解析
+  function getDeckFullText() {
+    return document.documentElement.textContent || document.body.textContent || "";
+  }
 
-    // 优先把搜索范围收窄到 Deck 兼容性区块；找不到就退到全页文本
-    let txt = full;
-    const scopeSel = [
-      ".steamdeck_compat", "#steamDeckCompat",
-      "[class*='deck_compat']", "[class*='DeckCompat']",
-      ".deck_verdict_block", "#deckCompatSection",
-      ".game_area_deck_compat", "[class*='deckCompat']",
-      "[class*='DeckVerdict']", "#game_area_deck",
-      ".steam_deck_section", "[class*='deckSection']", "[class*='DeckSection']",
-    ];
-    for (const s of scopeSel) {
-      const el = document.querySelector(s);
-      if (el) {
-        const t = norm(el.innerText || el.textContent || "");
-        if (t) { txt = t; break; }
-      }
+  // 以「平均帧率 / average frame rate」为锚点，取其附近第一个「数字 FPS」
+  function parseDeckFps(full) {
+    let fps = null, fpsText = null;
+    const anchor = full.search(/平均帧率|average\s*frame\s*rate/i);
+    if (anchor >= 0) {
+      const seg = full.slice(anchor, anchor + 90);
+      const m = seg.match(/(\d{1,3})\s*FPS/i);
+      if (m) { fps = Number(m[1]); fpsText = m[0]; }
     }
-    // 兜底：全页找含「平均帧率 / Steam Deck 兼容性」的最小容器
-    if (txt === full) {
-      const all = document.querySelectorAll("div, section, article, main");
-      let best = null, bestLen = 1e9;
-      for (const el of all) {
-        const t = norm(el.innerText || "");
-        if (t && t.length < bestLen && /平均帧率|Steam\s*Deck\s*兼容性|Deck\s*兼容性/.test(t)) {
-          best = t; bestLen = t.length;
+    // 兜底：任意「数字 FPS」，仅当其前 45 字符出现「帧率 / framerate / frame rate」语境才采信
+    // （只看数字之前，避免把匹配到的 FPS 自身算进上下文 → 误中系统需求里的「60 FPS」）
+    if (fps == null) {
+      const re = /(\d{1,3})\s*FPS/gi;
+      let mm;
+      while ((mm = re.exec(full))) {
+        const before = full.slice(Math.max(0, mm.index - 45), mm.index);
+        if (/帧率|framerate|frame\s*rate/i.test(before)) {
+          fps = Number(mm[1]);
+          fpsText = mm[0];
+          break;
         }
       }
-      if (best) txt = best;
     }
+    return { fps, fpsText };
+  }
 
-    const dom = { found: false, fps: null, fpsText: null, updated: null, hasHistogram: false, verdict: null };
+  function parseDeckDate(full) {
+    const dm =
+      full.match(/最后更新[于在]?\s*[:：]?\s*(\d{4}年\d{1,2}月\d{1,2}日|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/i) ||
+      full.match(/last\s*updated\s*[:：]?\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/i);
+    return dm ? dm[1] : null;
+  }
 
-    // 帧率：句式「平均帧率[为/：] 58 FPS」，兼容「为 / ： / 空格」等连接，再退到裸「数字 FPS」
-    // （「平均帧率」是 Deck 帧率功能独有文案，系统需求里的「60 FPS」不会被它误中）
-    let m =
-      txt.match(/平均帧率\D{0,12}?(\d{1,3})\s*FPS/i) ||
-      txt.match(/平均\s*帧率\D{0,12}?(\d{1,3})\s*FPS/i) ||
-      txt.match(/平均\s*FPS\D{0,12}?(\d{1,3})/i) ||
-      txt.match(/(\d{1,3})\s*FPS/i);
-    if (m) {
-      dom.fps = Number(m[1]);
-      // 保留 Steam 原句（如「平均帧率为 58 FPS」）备用
-      dom.fpsText = m[0];
+  // 轮询等待帧率文本出现在全页文本中（Steam 商店页帧率区为异步注入），超时上限 lim
+  async function waitForDeckFps(lim) {
+    lim = lim || 10000;
+    const t0 = Date.now();
+    while (Date.now() - t0 < lim) {
+      if (/平均帧率|帧率|framerate|frame\s*rate/i.test(getDeckFullText())) return true;
+      await new Promise((r) => setTimeout(r, 200));
     }
+    return false;
+  }
 
-    // 直方图/分布存在性（Steam 会在帧率区渲染条状结构或 canvas）
-    dom.hasHistogram =
+  function scanDomDeck() {
+    const full = getDeckFullText();
+    const { fps, fpsText } = parseDeckFps(full);
+    const updated = parseDeckDate(full);
+    const hasHistogram =
       /帧率分布|fps\s*分布|histogram|分布图|分布直方图/i.test(full) ||
       !!document.querySelector("canvas, [class*='histogram'], [class*='Histogram'], [class*='bar_chart'], [class*='barchart']");
-
-    // 更新日期：最后更新于 2026年11月9日 / 最后更新 2026-11-09
-    const dm = full.match(/最后更新[于在]?\s*[:：]?\s*(\d{4}年\d{1,2}月\d{1,2}日|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/i);
-    if (dm) dom.updated = dm[1];
-
-    // 兼容性结论文本（已验证/可玩/不支持）—— 仅作 DOM 侧补充
-    const vm = (txt || full).match(/(已验证|可玩|不支持|未评级|Verified|Playable|Unsupported)/i);
-    if (vm) dom.verdict = vm[1];
-
-    // 只要页面定位到 Deck 区块或抓到帧率/日期，即视为已发现该区块
-    dom.found = /Steam\s*Deck\s*兼容性|Deck\s*兼容性|平均帧率/.test(txt) || dom.fps != null || dom.updated != null;
-
-    return dom;
+    const vm = full.match(/(通过验证|已验证|可玩|不支持|未评级|Verified|Playable|Unsupported)/i);
+    const found = /Steam\s*Deck\s*兼容性|Deck\s*兼容性|平均帧率|帧率/i.test(full) || fps != null || updated != null;
+    return { found, fps, fpsText, updated, hasHistogram, verdict: vm ? vm[1] : null };
   }
 
   async function loadDeck() {
     await waitDeckReady();
+    await waitForDeckFps(); // 轮询直到帧率文本注入全页文本（含超时）
     const dom = scanDomDeck();
     const r = await ask("deck", { appid, dom });
 
