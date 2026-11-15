@@ -150,6 +150,16 @@
     runAll();
   });
 
+  // 「打开 Steam 了解更多」链接（detail 里动态生成）→ 事件委托，捕获阶段阻止行折叠
+  panel.addEventListener("click", async (e) => {
+    const a = e.target && e.target.closest && e.target.closest("#sip-deck-open");
+    if (!a) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const got = await autoReadLearnMore();
+    if (got) applyDeckFps(got.fps, got.updated);
+  }, true);
+
   /* ---------- 面板内嵌设置 ----------
    * Steam 客户端（Millennium + Extendium / CEF）里没有浏览器标签页，
    * 点击「扩展程序选项」会让宿主崩溃。因此把常用设置搬进面板，
@@ -730,9 +740,9 @@
   //   · 诊断片段里全是面板文字，看不到 Steam 真实文本。
   // 现在改用 TreeWalker 式遍历：跳过 #sip-panel 与 script/style/noscript/template，
   // 只收集页面可见文本节点并用空格拼接，从根上排除自污染与内联脚本源码干扰。
-  function getDeckFullText() {
+  function collectVisibleText(root) {
     const parts = [];
-    const stack = [document.body || document.documentElement];
+    const stack = [root];
     const SKIP = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|IFRAME)$/;
     while (stack.length) {
       const n = stack.pop();
@@ -748,6 +758,20 @@
       for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
     }
     return parts.join(" ").replace(/\s+/g, " ").trim();
+  }
+
+  // withIframes=true 时把同源 iframe 内的文本也并进来（Steam 兼容性弹窗可能是 iframe）
+  function getDeckFullText(withIframes) {
+    let s = collectVisibleText(document.body || document.documentElement);
+    if (withIframes) {
+      for (const f of document.querySelectorAll("iframe")) {
+        try {
+          const d = f.contentDocument;
+          if (d && d.body) s += " " + collectVisibleText(d.body);
+        } catch (e) { /* 跨域 iframe 忽略 */ }
+      }
+    }
+    return s;
   }
 
   // 从「干净」全页文本中抽取 Steam Deck 平均帧率数值。
@@ -808,18 +832,162 @@
     return dm ? dm[1] : null;
   }
 
-  // 轮询等待 Steam 帧率文本注入。【v1.1.4 关键修复】探针必须见到真正的「数字 FPS」，
-  // 不能再被「帧率 / 帧数」这类字样满足 —— 否则扩展面板自身的「Steam Deck 帧数 /
-  // 实测平均帧率」会让等待秒返回，扫描发生在 Steam 异步帧率区渲染之前。
-  async function waitForDeckFps(lim) {
-    lim = lim || 12000;
-    const t0 = Date.now();
-    const probe = /\d{1,4}(?:\.\d+)?\s*FPS/i;
-    while (Date.now() - t0 < lim) {
-      if (probe.test(getDeckFullText())) return true;
-      await new Promise((r) => setTimeout(r, 200));
+  /* ---------- 7b. 「了解更多」弹窗：帧率数字的真正所在（v1.1.5） ----------
+   * Valve 2026-11-10 起，Steam Deck 平均帧率只在点击商店页
+   * 「Steam Deck 兼容性 → 了解更多」后的弹窗里异步渲染，主页面 DOM 里没有。
+   * 文案形如：「玩家在 Steam Deck LCD 上玩此游戏时，平均帧率为 48 FPS」
+   *          「最后更新于 2026年11月12日」
+   * 官方 ajaxgetdeckappcompatibilityreport 接口只返回设备兼容性结论，不含 FPS 数值，
+   * 因此这里不猜接口，直接让扩展点开弹窗、读 Steam 自己渲染出来的数字，再关掉。
+   * ---------------------------------------------------------------------- */
+  const MODAL = {
+    tried: false, clicked: false, btnText: null, opened: false,
+    fps: null, updated: null, snippet: "", reason: "", closed: false,
+    fromCache: false, closeWay: "",
+  };
+
+  // 找「了解更多」按钮：优先取 Steam Deck 兼容性区块内的，其次全页第一个
+  function findLearnMoreBtn() {
+    const SEL = "a, button, [role='button'], [class*='btn'], [class*='Btn'], [class*='button']";
+    const nodes = Array.from(document.querySelectorAll(SEL));
+    const hit = (t) => /了解更多|Learn\s*More|更多資訊|更多详情|Mehr\s*erfahren|Voir\s*plus/i.test(t || "");
+    const scored = [];
+    for (const el of nodes) {
+      if (el.closest && el.closest("#" + PANEL_ID)) continue; // 排除扩展自己的按钮
+      const t = (el.textContent || "").trim();
+      if (!t || t.length > 30 || !hit(t)) continue;
+      // 靠近 Deck 兼容性区块的加分
+      let score = 0, p = el;
+      for (let i = 0; i < 6 && p; i++, p = p.parentElement) {
+        const sig = (p.className || "") + " " + (p.id || "") + " " + (p.getAttribute("data-featuretarget") || "");
+        if (/deck|compat|steamdeck/i.test(sig)) { score = 10 - i; break; }
+      }
+      scored.push({ el, t, score });
     }
+    scored.sort((a, b) => b.score - a.score);
+    return scored.length ? scored[0].el : null;
+  }
+
+  // 判断弹窗是否已渲染出帧率数字（含 iframe 内文本）
+  function readModalFps() {
+    const full = getDeckFullText(true);
+    const f = parseDeckFps(full);
+    if (f.fps == null) return null;
+    const d = parseDeckDate(full);
+    return { fps: f.fps, fpsText: f.fpsText, updated: d, full };
+  }
+
+  // 关掉 Steam 弹窗：主文档 + 同源 iframe 都找关闭按钮，再补 Escape / 全局关闭函数
+  function closeLearnMoreModal() {
+    const CLOSE = [
+      ".newmodal_close", ".modal_close", "[class*='ModalDialog'] [class*='close']",
+      "[class*='closeButton'], [class*='CloseButton'], [class*='dialog'] [class*='close']",
+      "[aria-label='Close'], [aria-label*='关闭'], [title='Close']",
+      "[class*='close'], [class*='Close']",
+    ].join(", ");
+    const DIALOG = "[class*='ModalDialog'], [class*='modal_dialog'], [class*='newmodal'], [role='dialog'], [class*='Modal']";
+    const docs = [document];
+    for (const f of document.querySelectorAll("iframe")) {
+      try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) {}
+    }
+    for (const d of docs) {
+      try {
+        const dialogs = d.querySelectorAll(DIALOG);
+        for (const dlg of dialogs) {
+          if (dlg.closest && dlg.closest("#" + PANEL_ID)) continue;
+          const btn = dlg.querySelector(CLOSE);
+          if (btn) {
+            btn.click();
+            MODAL.closed = true; MODAL.closeWay = "关闭按钮";
+            return true;
+          }
+        }
+        // 没有明确 dialog 容器时，退而求其次找全局关闭按钮（排除扩展面板）
+        const c = d.querySelector(CLOSE);
+        if (c && !(c.closest && c.closest("#" + PANEL_ID))) {
+          c.click(); MODAL.closed = true; MODAL.closeWay = "全局关闭按钮"; return true;
+        }
+      } catch (e) { /* 跨域或选择器异常，继续 */ }
+    }
+    // 兜底：Escape + Steam 客户端内置关闭函数
+    try {
+      for (const d of docs) {
+        d.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", keyCode: 27, bubbles: true }));
+      }
+      if (typeof window.HideModalDialog === "function") { window.HideModalDialog(); MODAL.closeWay = "HideModalDialog"; }
+      else if (typeof window.CloseModal === "function") { window.CloseModal(); MODAL.closeWay = "CloseModal"; }
+      if (!MODAL.closeWay) MODAL.closeWay = "Escape（可能未关净）";
+    } catch (e) { MODAL.closeWay = "关闭异常：" + (e && e.message); }
     return false;
+  }
+
+  // 自动点开「了解更多」→ 轮询等帧率渲染 → 读取 → 关弹窗
+  async function autoReadLearnMore(lim) {
+    lim = lim || 9000;
+    MODAL.tried = true;
+    const btn = findLearnMoreBtn();
+    if (!btn) { MODAL.reason = "未找到「了解更多」按钮（Steam 页面结构可能已变）"; return null; }
+    MODAL.btnText = (btn.textContent || "").trim().slice(0, 30);
+    try { btn.click(); MODAL.clicked = true; }
+    catch (e) { MODAL.reason = "点击失败：" + (e && e.message); return null; }
+
+    const t0 = Date.now();
+    while (Date.now() - t0 < lim) {
+      const got = readModalFps();
+      if (got) {
+        MODAL.opened = true;
+        MODAL.fps = got.fps;
+        MODAL.updated = got.updated;
+        const idx = got.full.search(/平均帧率|average\s*frame\s*rate/i);
+        MODAL.snippet = idx >= 0
+          ? got.full.slice(Math.max(0, idx - 60), idx + 140)
+          : ("…" + got.full.slice(Math.max(0, (got.full.indexOf(got.fpsText) || 0) - 60), (got.full.indexOf(got.fpsText) || 0) + 80));
+        closeLearnMoreModal();
+        return { fps: got.fps, fpsText: got.fpsText, updated: got.updated };
+      }
+      await new Promise((r) => setTimeout(r, 220));
+    }
+    MODAL.reason = "已点击「了解更多」，但 " + Math.round(lim / 1000) + "s 内弹窗未渲染出「平均帧率 X FPS」";
+    closeLearnMoreModal();
+    return null;
+  }
+
+  // 常驻监听：用户此后手动点开「了解更多」时，自动把帧率回填到面板第 7 项
+  let modalObserver = null;
+  function watchLearnMoreModal() {
+    if (modalObserver || !window.MutationObserver) return;
+    let timer = null;
+    modalObserver = new MutationObserver(() => {
+      if (MODAL.fps != null) { modalObserver.disconnect(); return; }
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        // 只在页面上真的出现 Steam 弹窗时才解析，避免误扫主 DOM
+        const dlg = document.querySelector("[class*='ModalDialog'], [class*='newmodal'], [role='dialog']");
+        if (!dlg) return;
+        const got = readModalFps();
+        if (!got) return;
+        MODAL.opened = true; MODAL.fps = got.fps; MODAL.updated = got.updated;
+        modalObserver.disconnect();
+        applyDeckFps(got.fps, got.updated);
+      }, 260);
+    });
+    try { modalObserver.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
+  }
+
+  // 把「了解更多」里读到的帧率直接更新到第 7 项徽标/副标题/详情
+  function applyDeckFps(fps, updated) {
+    const item = panel.querySelector('.sip-item[data-key="deck"]');
+    if (!item) return;
+    const badge = item.querySelector("[data-badge]");
+    const sub = item.querySelector("[data-sub]");
+    if (badge) { badge.textContent = fps + " FPS"; badge.className = "sip-badge b-ok"; }
+    if (sub) sub.textContent = "Steam Deck 平均帧率 " + fps + " FPS" + (updated ? "（最后更新 " + updated + "）" : "");
+    const detail = item.querySelector("[data-detail]");
+    if (detail) {
+      detail.innerHTML = detail.innerHTML
+        .replace(/<span>平均帧率<\/span><span>[^<]*<\/span>/,
+          "<span>平均帧率</span><span><b>" + fps + " FPS</b>" + (updated ? "（最后更新 " + esc(updated) + "）" : "") + " <em style='color:#8ba6bd'>了解更多弹窗</em></span>");
+    }
   }
 
   function scanDomDeck() {
@@ -836,9 +1004,32 @@
 
   async function loadDeck() {
     await waitDeckReady();
-    await waitForDeckFps(); // 轮询直到帧率文本注入全页文本（含超时）
+    // 【v1.1.5】帧率数字只在「了解更多」弹窗里，主 DOM 通常没有。
+    // 优先复用 24h 缓存（避免每次访问都弹窗），否则自动点开弹窗读 Steam 官方渲染的数值。
+    const peek = await ask("deckPeek", { appid });
     const dom = scanDomDeck();
-    const dbgText = deckDebugSnippet(getDeckFullText()); // 测试版诊断：页面真实文本片段
+    let fromModal = null;
+    if (peek && peek.cached && peek.fps != null) {
+      dom.fps = peek.fps;
+      dom.fpsText = peek.fps + " FPS";
+      dom.found = true;
+      dom.hasHistogram = true;
+      if (peek.updated) dom.updated = peek.updated;
+      MODAL.fromCache = true;
+      MODAL.fps = peek.fps;
+      MODAL.updated = peek.updated || null;
+    } else if (dom.fps == null) {
+      fromModal = await autoReadLearnMore();
+      if (fromModal) {
+        dom.fps = fromModal.fps;
+        dom.fpsText = fromModal.fpsText;
+        dom.found = true;
+        if (fromModal.updated) dom.updated = fromModal.updated;
+        dom.hasHistogram = true; // 弹窗里带直方图
+      }
+    }
+    watchLearnMoreModal(); // 之后用户手动点开也能自动回填
+    const dbgText = deckDebugSnippet(getDeckFullText()); // 测试版诊断：主 DOM 真实文本片段
     const r = await ask("deck", { appid, dom });
 
     const cat = r.categoryText || (r.domVerdict || "");
@@ -850,39 +1041,32 @@
       badge = r.fps + " FPS";
       cls = "b-ok";
       sub = "Steam Deck 平均帧率 " + r.fps + " FPS" + (cat ? "（兼容性：" + cat + "）" : "");
-    } else if (r.frameReason) {
-      // 接口明确说明「为何没有帧率」（如反作弊不支持/未测试），不再说「已收录却未抓到」误导用户
-      badge = "无实测帧率";
-      cls = "b-load";
-      sub = r.frameReason + (cat ? "（兼容性：" + cat + "）" : "");
     } else if (r.categoryText) {
       badge = r.categoryText;
       cls = r.category === 3 ? "b-ok" : r.category === 2 ? "b-info" : r.category === 1 ? "b-bad" : "b-load";
-      sub = "Deck 兼容性：" + r.categoryText + (r.frameAvailable ? " · 已收录帧率但未抓到数值" : " · 暂未展示帧率");
+      sub = "Deck 兼容性：" + r.categoryText + " · 帧率见商店页「了解更多」弹窗";
     } else if (r.tested === false) {
       badge = "未评级";
       cls = "b-load";
       sub = "Steam 未提供该游戏的 Deck 兼容性 / 帧率数据";
-    } else if (r.frameAvailable) {
-      badge = "已收录";
-      cls = "b-info";
-      sub = "Steam 已收录帧率，但页面未抓取到具体数值";
     }
 
     const detail = `
       <div class="sip-kv"><span>兼容性</span><span>${r.categoryText ? esc(r.categoryText) : (r.domVerdict ? esc(r.domVerdict) : "未评级 / 未提供")}</span></div>
       <div class="sip-kv"><span>平均帧率</span><span>${
-        r.fps != null ? `<b>${r.fps} FPS</b>${r.updated ? "（最后更新 " + esc(r.updated) + "）" : ""}${r.fromApi ? " <em style='color:#8ba6bd'>接口估算</em>" : ""}` : r.frameReason ? esc(r.frameReason) : r.frameAvailable ? "已收录，未抓到数值" : "未提供"
+        r.fps != null ? `<b>${r.fps} FPS</b>${r.updated ? "（最后更新 " + esc(r.updated) + "）" : ""}${fromModal ? " <em style='color:#8ba6bd'>了解更多弹窗</em>" : ""}` : "见商店页「了解更多」弹窗"
       }</span></div>
       <div class="sip-kv"><span>帧率分布</span><span>${r.hasHistogram ? "有直方图" : "无 / 未检出"}</span></div>
       <div class="sip-kv"><span>最后更新</span><span>${r.updated ? esc(r.updated) : "—"}</span></div>
-      <div class="sip-kv"><span>数据来源</span><span>${r.source ? esc(r.source) : "Steam Deck 兼容性报告"}</span></div>
+      <div class="sip-kv"><span>数据来源</span><span>${r.fps != null && fromModal ? "Steam 商店「了解更多」弹窗（官方渲染）" : (r.source ? esc(r.source) : "Steam Deck 兼容性报告")}</span></div>
       ${r.note ? `<div style="margin-top:6px;color:#e0a85a">提示：${esc(r.note)}</div>` : ""}
-      <div style="margin-top:6px"><a href="https://store.steampowered.com/saleaction/GetDeckCompatibilityReport/${appid}" target="_blank" rel="noreferrer">在商店页「Steam Deck 兼容性 → 了解更多」查看帧率直方图 →</a></div>
-      <details style="margin-top:8px"><summary style="cursor:pointer;color:#8ba6bd;font-size:12px">调试信息（测试版 1.1.4-beta）</summary>
-        <div class="sip-debug">Steam 页面文本（已排除扩展面板）：<br>${esc(dbgText)}</div>
-        ${r.debugApi ? `<div class="sip-debug">接口 frame 字段：${esc(r.debugApi)}</div>` : ""}
-        <div class="sip-debug">解析结果：fps=${r.fps != null ? r.fps : "null"} · frameAvailable=${r.frameAvailable} · frameReason=${r.frameReason ? esc(r.frameReason) : "null"} · found=${dom.found} · hasHistogram=${dom.hasHistogram}</div>
+      <div style="margin-top:6px"><a href="#" id="sip-deck-open" title="自动点开 Steam 的「了解更多」弹窗并读取帧率">↗ 打开 Steam「了解更多」查看帧率直方图</a></div>
+      <details style="margin-top:8px"><summary style="cursor:pointer;color:#8ba6bd;font-size:12px">调试信息（测试版 1.1.5-beta）</summary>
+        <div class="sip-debug">「了解更多」弹窗：fromCache=${MODAL.fromCache} · tried=${MODAL.tried} · clicked=${MODAL.clicked} · btn=${MODAL.btnText || "未找到"} · opened=${MODAL.opened} · fps=${MODAL.fps != null ? MODAL.fps : "null"} · updated=${MODAL.updated || "null"} · closed=${MODAL.closed} · closeWay=${MODAL.closeWay || "-"}${MODAL.reason ? " · 原因：" + esc(MODAL.reason) : ""}</div>
+        ${MODAL.snippet ? `<div class="sip-debug">弹窗帧率原文：${esc(MODAL.snippet)}</div>` : ""}
+        <div class="sip-debug">主 DOM 文本（已排除扩展面板）：<br>${esc(dbgText)}</div>
+        ${r.debugApi ? `<div class="sip-debug">接口设备兼容性：${esc(r.debugApi)}<br><em>注：frame_resolved_* 里的 frame 指 Valve 新硬件「Steam Frame」，不是帧率</em></div>` : ""}
+        <div class="sip-debug">解析结果：fps=${r.fps != null ? r.fps : "null"} · fromModal=${!!fromModal} · found=${dom.found} · hasHistogram=${dom.hasHistogram}</div>
       </details>
       ${r.errors && r.errors.length ? `<div class="sip-err">${r.errors.map(esc).join("<br>")}</div>` : ""}`;
 

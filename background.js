@@ -1088,14 +1088,14 @@ async function getEpicGiveaways(appid) {
 }
 
 /* ===========================================================
- * 7. Steam Deck 上的可用帧数（2026-11-09 Steam 官方新功能）
- * 数据源：Steam Deck 兼容性报告接口（结构化结论 + 帧率可用性）
- *        + 商店页 DOM 上 Steam 实际渲染的平均帧率文本（最忠实于页面显示）
- * 说明：
- *   - 兼容性结论（已验证/可玩/不支持）走接口 resolved_category（1/2/3），干净可靠；
- *   - 帧率数值优先抓商店页 DOM 上 Steam 展示的「平均 X FPS」（正是用户看到的数），
- *     接口 frame_resolved_items 仅作「是否已收录帧率」的判定补充（其内部结构随版本变动，不依赖）。
- *   - 仅对已通过 Deck 兼容性测试（已验证/可玩/不支持）且样本达标的游戏展示帧率。
+ * 7. Steam Deck 上的可用帧数（Valve 2026-11-10 上线的新功能）
+ * 数据源分工：
+ *   - 兼容性结论（已验证/可玩/不支持）→ ajaxgetdeckappcompatibilityreport 的 resolved_category（1/2/3）
+ *   - 平均帧率数值 → 商店页「Steam Deck 兼容性 → 了解更多」弹窗里 Steam 官方渲染的
+ *     「玩家在 Steam Deck LCD 上玩此游戏时，平均帧率为 48 FPS」，由 content.js 打开弹窗读取
+ * 【重要】接口 frame_resolved_* 中的 frame = Valve 新硬件「Steam Frame」，不是帧率；
+ *        该接口实测不含任何 FPS 数值，绝不可用于帧率判定。
+ * 说明：数据来自开启匿名帧率上报的 Deck 玩家；样本未达最低阈值时 Steam 不展示数值。
  * =========================================================== */
 async function getDeckReport(appid) {
   const url = `https://store.steampowered.com/saleaction/ajaxgetdeckappcompatibilityreport?nAppID=${appid}&l=schinese`;
@@ -1134,31 +1134,16 @@ function extractApiFps(res) {
 
 const DECK_CAT = { 3: "已验证", 2: "可玩", 1: "不支持", 0: "未评级" };
 
-// 【v1.1.4】frame_resolved_items 里可能并不是帧率数值，而是一条「为何没有帧率」的
-// 本地化说明 token（loc_token），例如 #SteamFrame_TestResult_UnsupportedAntiCheatConfiguration。
-// 识别它，避免把「Steam 明确没给数据」误报成「已收录帧率却未抓到数值」。
-function parseFrameReason(frameItems) {
-  if (!Array.isArray(frameItems)) return null;
-  const tokens = frameItems
-    .map((it) => (it && (it.loc_token || it.locToken || it.token || "")) || "")
-    .filter(Boolean)
-    .join(" | ");
-  if (!tokens) return null;
-  if (/AntiCheat/i.test(tokens)) return "反作弊配置不支持，Steam 未提供该游戏的 Deck 实测帧率";
-  if (/Unsupported|Incompatible|NotSupported/i.test(tokens)) return "该配置不受 Deck 帧率测试支持，Steam 未展示帧率";
-  if (/NoData|NotTested|Insufficient|NotEnough|NoResults|Pending/i.test(tokens)) return "样本不足 / 未完成测试，Steam 暂未展示帧率";
-  return null; // 未知 token：不武断判定，交回诊断面板让用户贴原文
-}
-
-// frame_resolved_items 里是否真含数值型帧率数据（区别于纯说明 token）
-function frameItemsHaveNumeric(frameItems) {
-  if (!Array.isArray(frameItems)) return false;
-  const hay = JSON.stringify(frameItems);
-  return (
-    /"(?:fps|framerate|frame_rate|frameRate|average|avg|frames|value|min|max)"\s*:\s*\d/i.test(hay) ||
-    /\d{2,3}\s*FPS/i.test(hay)
-  );
-}
+/* 【v1.1.5 重要更正】
+ * frame_resolved_category / frame_resolved_items 里的 "frame" 指的是 Valve 新硬件
+ * 「Steam Frame」（与 Steam Deck / SteamOS / Steam Machine 并列的第四类设备），
+ * 不是「帧率」。这个接口只返回四类设备的兼容性结论（loc_token 说明项），
+ * 实测过：返回体里根本没有任何 FPS 数值。
+ * 因此这里绝不再用它推断帧率，也不再把 UnsupportedAntiCheatConfiguration 之类
+ * 说明项误读成「该游戏没有帧率」——那与 Deck 帧率完全无关。
+ * 真正的平均帧率由 content.js 打开商店页「了解更多」弹窗后，从 Steam 官方
+ * 渲染的文本（「平均帧率为 48 FPS」）里读取，随 dom.fps 传进来。
+ */
 
 async function getDeck(appid, dom) {
   const key = "deck:" + appid;
@@ -1169,8 +1154,7 @@ async function getDeck(appid, dom) {
     category: null, // 1=不支持 2=可玩 3=已验证 0=未评级
     categoryText: null,
     tested: false,
-    frameAvailable: false,
-    frameReason: null,
+    frameAvailable: false, // 兼容旧字段：等价于 fps != null
     fps: null,
     fpsText: null,
     updated: null,
@@ -1201,30 +1185,15 @@ async function getDeck(appid, dom) {
       out.tested = cat != null && cat !== 0;
       out.category = cat;
       out.categoryText = DECK_CAT[cat] || null;
-      const frameCat = res.frame_resolved_category;
-      const frameItems = res.frame_resolved_items;
-      // 【v1.1.4】只有「数值型帧率数据」才算已收录；若接口只给了「为何没帧率」的说明 token，
-      // 则记为 frameReason，不再误判成 frameAvailable。
-      const numeric = frameItemsHaveNumeric(frameItems);
-      if (out.fps == null && !numeric) out.frameReason = parseFrameReason(frameItems);
-      out.frameAvailable =
-        numeric || (out.fps == null && !out.frameReason && frameCat != null);
-      out.source = "Steam Deck 兼容性报告（官方接口 + 商店页 DOM）";
-      // 测试版诊断：把接口里 frame 相关字段原样截出来，便于排查「已收录却抓不到数值」
+      // frame_resolved_* 只作为「Steam Frame 设备兼容性」诊断展示，不参与帧率判定
+      out.source = "Steam Deck 兼容性报告（设备结论） + 商店页「了解更多」弹窗（平均帧率）";
       try {
         out.debugApi =
-          "frame_resolved_category=" + frameCat +
-          " | frame_resolved_items=" + JSON.stringify(frameItems).slice(0, 800);
+          "frame_resolved_category(Steam Frame 设备)=" + res.frame_resolved_category +
+          " | frame_resolved_items=" + JSON.stringify(res.frame_resolved_items).slice(0, 500);
       } catch (e) { out.debugApi = "(序列化失败)"; }
-      // DOM 没抓到数但接口确认有帧率数据时，尽力从接口补一个
-      if (out.fps == null && out.frameAvailable) {
-        const apiFps = extractApiFps(res);
-        if (apiFps != null) {
-          out.fps = apiFps;
-          out.fpsText = apiFps + " FPS（接口）";
-          out.fromApi = true;
-        }
-      }
+      // 帧率数值只认 content.js 从弹窗里读到的；接口不再提供任何 FPS 兜底
+      out.frameAvailable = out.fps != null;
     } else {
       out.errors.push("Steam Deck 兼容性接口未返回数据");
     }
@@ -1232,14 +1201,10 @@ async function getDeck(appid, dom) {
     out.errors.push("Steam Deck 兼容性接口失败：" + httpHint(e));
   }
 
-  // ③ 状态判定（无帧率数值时的解释文案）
-  if (out.fps == null && out.frameReason) {
-    out.note = out.frameReason;
-  } else if (out.fps == null && out.frameAvailable) {
-    out.note =
-      "Steam 已收录该游戏帧率数据，但页面未抓取到具体数值（可在商店页「Steam Deck 兼容性 → 了解更多」查看直方图）";
-  } else if (out.fps == null && out.tested && !out.frameAvailable) {
-    out.note = "Steam Deck 已评级，但暂未展示帧率（样本不足或未达统计阈值）";
+  // ③ 状态判定
+  // 帧率只在「了解更多」弹窗里；没读到 ≠ Steam 没数据（可能是样本未达阈值或弹窗未打开）
+  if (out.fps == null && out.tested) {
+    out.note = "平均帧率在商店页「Steam Deck 兼容性 → 了解更多」弹窗里展示；若该游戏样本未达阈值，Steam 不会显示数值";
   } else if (out.fps == null && !out.tested) {
     out.note = "Steam 未提供该游戏的 Deck 兼容性 / 帧率数据";
   }
@@ -1277,6 +1242,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return await getEpicGiveaways(msg.appid);
       case "deck":
         return await getDeck(msg.appid, msg.dom);
+      // 只读 Deck 缓存：若已从「了解更多」弹窗拿到过帧率，直接复用，避免每次访问都弹窗打扰用户
+      case "deckPeek": {
+        const h = await cacheGet("deck:" + msg.appid);
+        return h && h.fps != null ? { cached: true, fps: h.fps, updated: h.updated } : { cached: false };
+      }
       case "getSettings": {
         const o = await chrome.storage.local.get("settings");
         return { settings: (o && o.settings) || {} };

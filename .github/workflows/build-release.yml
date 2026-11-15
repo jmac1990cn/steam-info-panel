@@ -99,9 +99,12 @@ jobs:
             - **ZIP 侧载**：下载 `steam-info-panel-${{ steps.meta.outputs.version }}.zip` 解压，在 `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」，选中解压出的 `steam-info-panel` 文件夹。
             - 装好后请点面板「重新检测」清除 24h 缓存。
 
-            ### Steam Deck 帧率调试
-            若功能 7 显示「无实测帧率 / 已收录帧率但未抓到数值」，展开其详情里的「调试信息」，
-            把「Steam 页面文本（已排除扩展面板）」「接口 frame 字段」「解析结果」三段原样贴回，即可精准定位。
+            ### Steam Deck 帧率说明（v1.1.5）
+            平均帧率只在商店页「Steam Deck 兼容性 → 了解更多」弹窗里展示（Valve 2026-11-10 新功能）。
+            本扩展会自动点开该弹窗、读取 Steam 官方渲染的「平均帧率为 X FPS」后关闭；
+            也可点面板详情里的「↗ 打开 Steam 了解更多」手动触发，或自行点开弹窗由扩展自动回填。
+            若仍无数值，展开详情里的「调试信息」，把「了解更多弹窗」一行原样贴回即可定位。
+            注：接口 `frame_resolved_*` 中的 frame 指 Valve 新硬件「Steam Frame」，并非帧率。
 
             ### 安装方式
             - **侧载（推荐）**：下载 `steam-info-panel-${{ steps.meta.outputs.version }}.zip`，解压后在浏览器扩展管理页
