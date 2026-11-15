@@ -723,66 +723,72 @@
     }
   }
 
-  // 抓商店页「Steam Deck 兼容性」区块上 Steam 实际渲染的平均帧率文本
+  // 抓商店页上 Steam 实际渲染的平均帧率文本（如「平均帧率为 58 FPS」「最后更新于 2026年11月9日」）
+  // 不依赖具体 class：直接在全页文本里匹配句式，最稳。
   function scanDomDeck() {
     const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
-    let scope = null;
+    const full = norm(document.body ? document.body.innerText : "");
+
+    // 优先把搜索范围收窄到 Deck 兼容性区块；找不到就退到全页文本
+    let txt = full;
     const scopeSel = [
-      ".steamdeck_compat",
-      "#steamDeckCompat",
-      "[class*='deck_compat']",
-      "[class*='DeckCompat']",
-      ".deck_verdict_block",
-      "#deckCompatSection",
-      ".game_area_deck_compat",
+      ".steamdeck_compat", "#steamDeckCompat",
+      "[class*='deck_compat']", "[class*='DeckCompat']",
+      ".deck_verdict_block", "#deckCompatSection",
+      ".game_area_deck_compat", "[class*='deckCompat']",
+      "[class*='DeckVerdict']", "#game_area_deck",
+      ".steam_deck_section", "[class*='deckSection']", "[class*='DeckSection']",
     ];
     for (const s of scopeSel) {
       const el = document.querySelector(s);
       if (el) {
-        scope = el;
-        break;
+        const t = norm(el.innerText || el.textContent || "");
+        if (t) { txt = t; break; }
       }
     }
-    // 兜底：找含「Steam Deck 兼容性 / Deck 兼容性」文本的最小容器
-    if (!scope) {
-      const all = document.querySelectorAll("div, section, article");
+    // 兜底：全页找含「平均帧率 / Steam Deck 兼容性」的最小容器
+    if (txt === full) {
+      const all = document.querySelectorAll("div, section, article, main");
+      let best = null, bestLen = 1e9;
       for (const el of all) {
         const t = norm(el.innerText || "");
-        if (t && t.length < 500 && /Steam\s*Deck\s*兼容性|Deck\s*兼容性/.test(t)) {
-          scope = el;
-          break;
+        if (t && t.length < bestLen && /平均帧率|Steam\s*Deck\s*兼容性|Deck\s*兼容性/.test(t)) {
+          best = t; bestLen = t.length;
         }
       }
+      if (best) txt = best;
     }
 
     const dom = { found: false, fps: null, fpsText: null, updated: null, hasHistogram: false, verdict: null };
-    if (!scope) return dom;
-    dom.found = true;
 
-    const txt = norm(scope.innerText || scope.textContent || "");
-
-    // 帧率：抓「（平均）数字 FPS」；优先匹配带平均语义的，其次裸数字+单位
+    // 帧率：句式「平均帧率[为/：] 58 FPS」，兼容「为 / ： / 空格」等连接，再退到裸「数字 FPS」
+    // （「平均帧率」是 Deck 帧率功能独有文案，系统需求里的「60 FPS」不会被它误中）
     let m =
-      txt.match(/平均帧率\s*[:：]?\s*(\d{1,3})\s*FPS/i) ||
-      txt.match(/平均\s*(\d{1,3})\s*FPS/i) ||
+      txt.match(/平均帧率\D{0,12}?(\d{1,3})\s*FPS/i) ||
+      txt.match(/平均\s*帧率\D{0,12}?(\d{1,3})\s*FPS/i) ||
+      txt.match(/平均\s*FPS\D{0,12}?(\d{1,3})/i) ||
       txt.match(/(\d{1,3})\s*FPS/i);
     if (m) {
       dom.fps = Number(m[1]);
-      dom.fpsText = m[1] + " FPS";
+      // 保留 Steam 原句（如「平均帧率为 58 FPS」）备用
+      dom.fpsText = m[0];
     }
 
     // 直方图/分布存在性（Steam 会在帧率区渲染条状结构或 canvas）
     dom.hasHistogram =
-      /帧率分布|fps\s*分布|histogram|分布图/i.test(txt) ||
-      !!scope.querySelector("canvas, [class*='histogram'], [class*='Histogram']");
+      /帧率分布|fps\s*分布|histogram|分布图|分布直方图/i.test(full) ||
+      !!document.querySelector("canvas, [class*='histogram'], [class*='Histogram'], [class*='bar_chart'], [class*='barchart']");
 
-    // 更新日期：最后更新 2026-xx-xx
-    const dm = txt.match(/(?:最后更新|更新于|last\s*updated)\s*[:：]?\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/i);
+    // 更新日期：最后更新于 2026年11月9日 / 最后更新 2026-11-09
+    const dm = full.match(/最后更新[于在]?\s*[:：]?\s*(\d{4}年\d{1,2}月\d{1,2}日|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/i);
     if (dm) dom.updated = dm[1];
 
-    // 兼容性结论文本（已验证/可玩/不支持）
-    const vm = txt.match(/(已验证|可玩|不支持|未评级|Verified|Playable|Unsupported)/i);
+    // 兼容性结论文本（已验证/可玩/不支持）—— 仅作 DOM 侧补充
+    const vm = (txt || full).match(/(已验证|可玩|不支持|未评级|Verified|Playable|Unsupported)/i);
     if (vm) dom.verdict = vm[1];
+
+    // 只要页面定位到 Deck 区块或抓到帧率/日期，即视为已发现该区块
+    dom.found = /Steam\s*Deck\s*兼容性|Deck\s*兼容性|平均帧率/.test(txt) || dom.fps != null || dom.updated != null;
 
     return dom;
   }
@@ -818,7 +824,7 @@
     const detail = `
       <div class="sip-kv"><span>兼容性</span><span>${r.categoryText ? esc(r.categoryText) : (r.domVerdict ? esc(r.domVerdict) : "未评级 / 未提供")}</span></div>
       <div class="sip-kv"><span>平均帧率</span><span>${
-        r.fps != null ? `<b>${r.fps} FPS</b>${r.fpsText && r.fpsText !== r.fps + " FPS" ? "（" + esc(r.fpsText) + "）" : ""}${r.fromApi ? " <em style='color:#8ba6bd'>接口估算</em>" : ""}` : r.frameAvailable ? "已收录，未抓到数值" : "未提供"
+        r.fps != null ? `<b>${r.fps} FPS</b>${r.updated ? "（最后更新 " + esc(r.updated) + "）" : ""}${r.fromApi ? " <em style='color:#8ba6bd'>接口估算</em>" : ""}` : r.frameAvailable ? "已收录，未抓到数值" : "未提供"
       }</span></div>
       <div class="sip-kv"><span>帧率分布</span><span>${r.hasHistogram ? "有直方图" : "无 / 未检出"}</span></div>
       <div class="sip-kv"><span>最后更新</span><span>${r.updated ? esc(r.updated) : "—"}</span></div>
