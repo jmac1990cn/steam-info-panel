@@ -41,12 +41,19 @@ jobs:
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
       - name: 将版本号写入 manifest
+        # 注意：Chrome 扩展的 manifest.version 只接受「数字+点」（如 1.1.3），不允许 -beta/-rc 等后缀。
+        # 因此把 tag 版本号净化成纯数字再写入 manifest（beta/rc 仅作为发布渠道，体现在 tag/Release 名上）。
         run: |
-          python3 - <<'PY'
-          import json
+          RAW="${{ steps.meta.outputs.version }}"
+          SAFE=$(echo "$RAW" | sed -E 's/[-+].*$//; s/[^0-9.]//g')
+          if [ -z "$SAFE" ]; then SAFE="0.0.0"; fi
+          echo "manifest version (sanitized from '$RAW') = $SAFE"
+          python3 - "$SAFE" <<'PY'
+          import json, sys
+          v = sys.argv[1]
           with open('manifest.json', 'r', encoding='utf-8') as f:
               m = json.load(f)
-          m['version'] = '${{ steps.meta.outputs.version }}'
+          m['version'] = v
           with open('manifest.json', 'w', encoding='utf-8') as f:
               json.dump(m, f, ensure_ascii=False, indent=2)
               f.write('\n')
