@@ -363,19 +363,3 @@
   color: var(--sip-bad);
   margin-top: 4px;
 }
-
-.sip-debug {
-  margin-top: 6px;
-  padding: 6px 8px;
-  background: rgba(120, 170, 210, 0.08);
-  border: 1px dashed rgba(139, 166, 189, 0.4);
-  border-radius: 4px;
-  color: #8ba6bd;
-  font-size: 11px;
-  line-height: 1.5;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  word-break: break-all;
-  white-space: pre-wrap;
-  max-height: 160px;
-  overflow: auto;
-}

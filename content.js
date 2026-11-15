@@ -47,14 +47,9 @@
     });
   }
 
-  function money(v, cur) {
-    if (v == null || isNaN(v)) return "—";
-    return (cur === "cny" ? "¥" : "$") + Number(v).toFixed(2);
-  }
-
   /* ---------- 面板骨架 ---------- */
   const ITEMS = [
-    { key: "price", label: "史低价格", hint: "CheapShark 史低 + Steam 当前价" },
+    { key: "price", label: "史低价格", hint: "ITAD 国区史低 + Steam 当前价" },
     { key: "owned", label: "家庭库是否已有", hint: "Steam 库存 / 家庭共享判定" },
     { key: "dlc", label: "DLC 是否单独下载", hint: "DLC 清单与下载方式推断" },
     { key: "xgp", label: "是否在 XGP 会员库", hint: "Xbox Game Pass 目录比对" },
@@ -86,7 +81,7 @@
         </div>`
       ).join("")}
       <div id="sip-foot">
-        <span>数据源：CheapShark / Steam / PCGamingWiki / SteamDB / GamePass / Epic / Steam Deck 兼容性报告</span>
+        <span>数据源：ITAD / Steam / PCGamingWiki / SteamDB / GamePass / Epic / Steam Deck 兼容性报告</span>
         <a href="#" id="sip-refresh" title="清除缓存并重新检测">重新检测</a>
         <a href="#" id="sip-set-toggle" title="面板内设置">⚙ 设置</a>
       </div>
@@ -284,11 +279,10 @@
   /* ---------- 1. 史低价格 ---------- */
   async function loadPrice() {
     const r = await ask("price", { appid });
-    if (r.error && !r.lowest) {
+    if (r.error && !r.itad) {
       render("price", "失败", "b-warn", esc(r.error), "");
       return;
     }
-    const l = r.lowest; // CheapShark：美元口径
     const itad = r.itad || null; // ITAD：Steam 商店国区史低
     const obs = r.observed || null; // 本地观测最低
     const cn = r.current && r.current.cn;
@@ -318,10 +312,6 @@
       badge = "国区史低 ¥" + Number(cnLow.cny).toFixed(2);
       cls = "b-info";
       sub += `　|　${cnLowSrc}${cnLow.date ? "（" + esc(cnLow.date) + "）" : ""}`;
-    } else if (l) {
-      badge = "史低 $" + l.usd.toFixed(2);
-      cls = "b-info";
-      sub += `　|　美元口径 ${esc(l.date || "—")}`;
     }
 
     const detail = `
@@ -349,10 +339,6 @@
       <div class="sip-kv"><span>本地观测</span><span>${
         obs ? `¥${Number(obs.min).toFixed(2)}（自 ${esc(obs.first)} 起，当前 ¥${Number(obs.cur).toFixed(2)}）` : "暂无"
       }</span></div>
-      <div class="sip-kv"><span>美元史低</span><span>${
-        l ? `$${l.usd.toFixed(2)}　${esc(l.date || "")}　约 ¥${l.cny.toFixed(2)}` : "—"
-      }</span></div>
-      <div class="sip-kv"><span>三方最低</span><span>${r.cheapestNow != null ? money(r.cheapestNow, "usd") : "—"}</span></div>
       <div class="sip-kv"><span>国区现价</span><span>${
         cn && cn.final ? esc(cn.final) + (cn.initial && cn.discount ? `（原价 ${esc(cn.initial)}）` : "") : cn && cn.free ? "免费" : "—"
       }</span></div>
@@ -805,26 +791,6 @@
     return { fps, fpsText };
   }
 
-  // 诊断（v1.1.4 增强）：基于「已排除扩展面板」的干净文本，输出：
-  //   ① 文本长度；② 帧率关键词附近片段；③ 页面里所有「数字 FPS」命中及其前文（最多 8 条）。
-  // 若 ③ 为「无」，即可一锤定音：Steam 页面 DOM 文本里根本没渲染帧率数字（数值可能画在 canvas 里）。
-  function deckDebugSnippet(full) {
-    const hits = [];
-    const re = /\d{1,4}(?:\.\d+)?\s*FPS/gi;
-    let m;
-    while ((m = re.exec(full)) && hits.length < 8) {
-      hits.push("…" + full.slice(Math.max(0, m.index - 36), m.index) + "【" + m[0] + "】");
-    }
-    const idx = full.search(/平均|帧率|帧数|fps|frame\s*rate|steam\s*deck/i);
-    const snippet = idx < 0
-      ? "(干净文本中未命中任何帧率关键词)"
-      : full.slice(Math.max(0, idx - 30), idx + 220);
-    return "干净文本长度=" + full.length +
-      "\n帧率区片段：" + snippet +
-      "\n页面所有 FPS 命中(" + hits.length + "条)：" +
-      (hits.length ? "\n  " + hits.join("\n  ") : "无（Steam 页面 DOM 文本里没有任何「数字 FPS」）");
-  }
-
   function parseDeckDate(full) {
     const dm =
       full.match(/最后更新[于在]?\s*[:：]?\s*(\d{4}年\d{1,2}月\d{1,2}日|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/i) ||
@@ -1029,7 +995,6 @@
       }
     }
     watchLearnMoreModal(); // 之后用户手动点开也能自动回填
-    const dbgText = deckDebugSnippet(getDeckFullText()); // 测试版诊断：主 DOM 真实文本片段
     const r = await ask("deck", { appid, dom });
 
     const cat = r.categoryText || (r.domVerdict || "");
@@ -1061,13 +1026,6 @@
       <div class="sip-kv"><span>数据来源</span><span>${r.fps != null && fromModal ? "Steam 商店「了解更多」弹窗（官方渲染）" : (r.source ? esc(r.source) : "Steam Deck 兼容性报告")}</span></div>
       ${r.note ? `<div style="margin-top:6px;color:#e0a85a">提示：${esc(r.note)}</div>` : ""}
       <div style="margin-top:6px"><a href="#" id="sip-deck-open" title="自动点开 Steam 的「了解更多」弹窗并读取帧率">↗ 打开 Steam「了解更多」查看帧率直方图</a></div>
-      <details style="margin-top:8px"><summary style="cursor:pointer;color:#8ba6bd;font-size:12px">调试信息（测试版 1.1.5-beta）</summary>
-        <div class="sip-debug">「了解更多」弹窗：fromCache=${MODAL.fromCache} · tried=${MODAL.tried} · clicked=${MODAL.clicked} · btn=${MODAL.btnText || "未找到"} · opened=${MODAL.opened} · fps=${MODAL.fps != null ? MODAL.fps : "null"} · updated=${MODAL.updated || "null"} · closed=${MODAL.closed} · closeWay=${MODAL.closeWay || "-"}${MODAL.reason ? " · 原因：" + esc(MODAL.reason) : ""}</div>
-        ${MODAL.snippet ? `<div class="sip-debug">弹窗帧率原文：${esc(MODAL.snippet)}</div>` : ""}
-        <div class="sip-debug">主 DOM 文本（已排除扩展面板）：<br>${esc(dbgText)}</div>
-        ${r.debugApi ? `<div class="sip-debug">接口设备兼容性：${esc(r.debugApi)}<br><em>注：frame_resolved_* 里的 frame 指 Valve 新硬件「Steam Frame」，不是帧率</em></div>` : ""}
-        <div class="sip-debug">解析结果：fps=${r.fps != null ? r.fps : "null"} · fromModal=${!!fromModal} · found=${dom.found} · hasHistogram=${dom.hasHistogram}</div>
-      </details>
       ${r.errors && r.errors.length ? `<div class="sip-err">${r.errors.map(esc).join("<br>")}</div>` : ""}`;
 
     render("deck", badge, cls, sub, detail);

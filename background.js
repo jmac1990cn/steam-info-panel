@@ -6,11 +6,11 @@
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-// 汇率仅用于把美元史低折算成人民币做参考，标注为估算
-const USD_CNY = 7.15;
-
 // ITAD API key 不再内置，需用户自备：免费申请入口 https://isthereanydeal.com/apps/my/
 // （注册/登录后在「My Apps」里生成 key；API 文档 https://docs.isthereanydeal.com/ ）
+// 【v1.1.6】史低价格统一走 ITAD；CheapShark 数据源已移除。
+// 原因：其 /games?steamAppID 端点对通用浏览器 UA 稳定返回 429 "API misuse"，
+// 而扩展 fetch 中 User-Agent 属 forbidden header，无法可靠覆盖，重试/冷却都无意义。
 
 // 各类数据缓存时长（毫秒）
 const TTL = {
@@ -85,51 +85,17 @@ const s = (v) => String(v == null ? "" : v);
 
 /* ===========================================================
  * 1. 史低价格
- * 数据源：CheapShark（史低 / 第三方最低价）+ Steam 官方 appdetails（当前价）
+ * 数据源：ITAD（Steam 国区史低，需自备 key）+ Steam 官方 appdetails（当前价）
+ *        + 本地观测累积（未配置 key 时的兜底）
+ * 【v1.1.6】移除 CheapShark：见文件头说明，其接口在扩展环境稳定返回 429。
  * =========================================================== */
-// CheapShark 偶发 429 限流：失败后按间隔递增重试至多 3 次
-async function fetchCheapSharkLowest(appid, out) {
-  const url = "https://www.cheapshark.com/api/1.0/games?steamAppID=" + appid;
-  let lastErr = null;
-  for (let i = 0; i < 3; i++) {
-    try {
-      const j = await http(url, { json: true, timeout: 12000 });
-      const g = Array.isArray(j) && j[0] ? j[0] : null;
-      if (!g) {
-        out.errors.push("CheapShark 无该 app 的史低记录");
-        return null;
-      }
-      out.name = (g.info && g.info.title) || null;
-      out.cheapestNow = g.cheapest ? parseFloat(g.cheapest) : null;
-      const l = g.cheapestPriceEver || null;
-      if (l && l.price) {
-        return {
-          usd: parseFloat(l.price),
-          cny: Math.round(parseFloat(l.price) * USD_CNY * 100) / 100,
-          date: l.date ? new Date(l.date * 1000).toISOString().slice(0, 10) : null,
-        };
-      }
-      return null;
-    } catch (e) {
-      lastErr = e;
-      await sleep(1200 * (i + 1));
-    }
-  }
-  throw lastErr || new Error("CheapShark 请求失败");
-}
-
 async function getPrice(appid) {
   const key = "price:" + appid;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
-  const out = { appid, name: null, lowest: null, cheapestNow: null, current: {}, errors: [] };
-
-  try {
-    out.lowest = await fetchCheapSharkLowest(appid, out);
-  } catch (e) {
-    out.errors.push("史低接口失败：" + e.message);
-  }
+  // 史低只由 ITAD 提供（需 key）；未配置时用本地观测累积。不再调用任何第三方史低接口。
+  const out = { appid, name: null, current: {}, errors: [] };
 
   for (const cc of ["cn", "us"]) {
     try {
@@ -166,7 +132,7 @@ async function getPrice(appid) {
     } catch (e) {}
   }
 
-  // 国区史低：ITAD（需 key）优先，其次本地观测，最后 CheapShark 美元口径
+  // 国区史低：ITAD（需 key）优先，其次本地观测累积
   const itadKey = await getItadKey();
   if (itadKey) {
     try {
@@ -1187,11 +1153,7 @@ async function getDeck(appid, dom) {
       out.categoryText = DECK_CAT[cat] || null;
       // frame_resolved_* 只作为「Steam Frame 设备兼容性」诊断展示，不参与帧率判定
       out.source = "Steam Deck 兼容性报告（设备结论） + 商店页「了解更多」弹窗（平均帧率）";
-      try {
-        out.debugApi =
-          "frame_resolved_category(Steam Frame 设备)=" + res.frame_resolved_category +
-          " | frame_resolved_items=" + JSON.stringify(res.frame_resolved_items).slice(0, 500);
-      } catch (e) { out.debugApi = "(序列化失败)"; }
+      // 正式版移除调试诊断：frame_resolved_* 是 Steam Frame 设备兼容性，不参与帧率判定
       // 帧率数值只认 content.js 从弹窗里读到的；接口不再提供任何 FPS 兜底
       out.frameAvailable = out.fps != null;
     } else {

@@ -4,13 +4,13 @@
 
 | # | 功能 | 数据源 | 说明 |
 |---|------|--------|------|
-| 1 | 史低价格 | **Steam 国区口径**：ITAD（需 key，取 Steam 档位 `storeLow`）→ 本地观测累积 → CheapShark（美元兜底） | 优先给出 Steam 国区史低，同时显示国区/美区当前价与折扣 |
+| 1 | 史低价格 | **Steam 国区口径**：ITAD（需 key，取 Steam 档位 `storeLow`）→ 本地观测累积 | 给出 Steam 国区史低，同时显示国区/美区当前价与折扣。v1.1.6 起已移除 CheapShark 数据源（其接口在扩展环境稳定返回 429） |
 | 2 | 家庭库是否已有 | **Steam 客户端本地文件**优先，网页登录态补充 | 区分「本人拥有」「家庭共享借入」「未拥有」 |
 | 3 | DLC 是否单独下载 | Steam appdetails 的 dlc 列表 | 逐条列出 DLC，区分「原声/画集类独立下载项」与「随本体安装项」 |
 | 4 | 是否在 XGP 会员库 | 内置 Game Pass 目录（631 款）+ 每周自动更新 | 本地离线比对，命中即显示匹配的目录名称 |
 | 5 | 是否有 D 加密 | **Steam 商店页官方披露节点**（`div.DRM_notice`，零网络） | 直接读 Valve 强制发行商填写的「包含第三方 DRM: …」字段；无该节点即未披露。PCGamingWiki / SteamDB 仅在页面未就绪时兜底 |
 | 6 | 是否在 Epic 免费过 | **ITAD 赠送记录**（IsThereAnyDeal，需自备 key） | 需在设置中填入自己的 ITAD API key（免费申请：<https://isthereanydeal.com/apps/my/>）。由 Steam appid 定位游戏身份，查 ITAD 该游戏的 Epic 历史赠送记录（覆盖 2018 年起每周喜加一）；判定 shop 是否为 Epic（新记录 `shop.id=16`、早期记录 `shop` 为 null 且标题含「Epic」）。命中即显示「曾免费 / 当前免费中 / 即将免费」+ 次数与时段，附领取链接。免登录 |
-| 7 | Steam Deck 帧数 | **Steam 官方 Deck 兼容性报告**（`ajaxgetdeckappcompatibilityreport` 接口 + 商店页 DOM，零 / 少网络） | Steam 于 2026-11-09 在商店页「Steam Deck 兼容性 → 了解更多」下新增玩家实测平均帧率统计（覆盖已通过 Deck 兼容性测试的的游戏）。兼容性结论（已验证 / 可玩 / 不支持）走接口 `resolved_category`；平均帧率优先抓页面实际渲染的 FPS 文本，接口 `frame_resolved_items` 仅作「是否已收录」补充。仅对已评级且样本达标的游戏展示帧率，部分游戏会显示「已收录但未抓到具体数值」或「样本不足未展示」 |
+| 7 | Steam Deck 帧数 | **Steam 商店「了解更多」弹窗**（Steam 官方渲染文本）+ Deck 兼容性接口结论 | 平均帧率只在点开「Steam Deck 兼容性 → 了解更多」后才异步加载，主页面 DOM 里没有该数字。扩展自动点开弹窗读取「平均帧率为 X FPS」后关闭；读到的数值缓存 24 小时，手动点开弹窗或点面板链接也会自动回填。兼容性结论（已验证 / 可玩 / 不支持）来自接口 `resolved_category`。注：接口 `frame_resolved_*` 中的 frame 指 Valve 新硬件「Steam Frame」，并非帧率 |
 
 ## 安装
 
@@ -20,7 +20,7 @@
 2. 点击「加载已解压的扩展程序」，选择本目录 `steam-info-panel`
 3. 打开任意 Steam 游戏页，例如 `https://store.steampowered.com/app/1196590/`
 
-> ⚠️ **不要拖 `steam-info-panel.crx` 安装。** Chrome / Edge / Chromium 早已禁止非商店扩展的 crx 拖拽安装：它们会把 `.crx` 当**文件夹**去解析，读不到 manifest，于是报「清单文件缺失或不可读取 / 无法加载清单」（`Manifest file is missing or unreadable`）。这不是包损坏，是安装方式不对——一律用上面的「加载已解压」。
+> **CRX 拖拽**：部分环境允许直接拖入 `.crx` 安装 / 覆盖更新（扩展 ID 由固定私钥保持不变）。若拖入后报「清单文件缺失或不可读取」，改用上面的「加载已解压」即可。
 >
 > **Linux / Steam Deck（桌面模式）**：如需压缩包，直接在本页点「Code → Download ZIP」下载仓库，解压后进入目录即可（仓库即源码，无需额外解包步骤）。也可用命令行 `google-chrome --load-extension=/home/deck/…/steam-info-panel` 启动。
 >
@@ -54,7 +54,7 @@ Steam 客户端基于 Chromium（CEF），可以通过插件框架挂载本扩�
 
 - **精确国区史低**：在 [isthereanydeal.com/apps/my](https://isthereanydeal.com/apps/my/) 免费注册获取 API key（登录后进入 My Apps 创建应用即得），填入扩展选项页 → 该项显示 Steam 商店（`shop 61`）在中国区的历史最低价（ITAD 的 `storeLow`）
 - **未配置 key**：插件会把每次访问时抓到的国区当前价记录下来，累积成「本地观测最低价」，并注明观测起始日期
-- **美元口径兜底**：CheapShark 史低（含日期），面板中标注为非国区口径
+- **v1.1.6 起**：移除 CheapShark 数据源，史低统一由 ITAD 提供。原因：其 `/games?steamAppID` 端点对通用浏览器 UA 稳定返回 429 `API misuse`，而扩展 `fetch` 中 `User-Agent` 属 forbidden header 无法可靠覆盖，重试与冷却都无意义
 - 若 Steam 在国区当前无在售（ITAD 不返回 Steam 档位），自动回退为「ITAD·全商店」史低并在面板标注，避免把第三方商店价误当成 Steam 史低
 
 ### ITAD 接口调用方式（v1.0.1 修正）
@@ -116,7 +116,7 @@ steam-info-panel/
 ## 权限
 
 - `storage`、`alarms`
-- 跨域访问：`store.steampowered.com`、`api.steampowered.com`、`www.cheapshark.com`、`steamdb.info`、`www.pcgamingwiki.com`、`catalog.gamepass.com`、`displaycatalog.mp.microsoft.com`、`api.isthereanydeal.com`
+- 跨域访问：`store.steampowered.com`、`api.steampowered.com`、`steamdb.info`、`www.pcgamingwiki.com`、`catalog.gamepass.com`、`displaycatalog.mp.microsoft.com`、`api.isthereanydeal.com`
 
 缓存时效：价格 6 小时 · 库存 10 分钟 · DLC / GamePass 12 小时 · DRM 24 小时 · Epic 免费 24 小时 · Steam Deck 帧数 24 小时 · Game Pass 目录每 7 天更新。
 

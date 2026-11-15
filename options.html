@@ -110,19 +110,19 @@
   </head>
   <body>
     <h1>Steam 游戏速查面板</h1>
-    <div class="sub">版本 1.1.5（测试版 beta） · 打开任意 Steam 商店游戏页，右侧自动显示七项检测结果</div>
+    <div class="sub">版本 1.1.6 · 打开任意 Steam 商店游戏页，右侧自动显示七项检测结果</div>
     <div id="envwarn" class="warnbox"></div>
 
     <div class="card">
       <h2>七项功能</h2>
       <ul>
-        <li><b>史低价格</b>：ITAD（可选 key）取 Steam 国区史低 + Steam 国区/美区当前价，兜底 CheapShark 美元口径</li>
+        <li><b>史低价格</b>：ITAD（可选 key）取 Steam 国区史低 + Steam 国区/美区当前价；未配置 key 时改用本地观测累积的最低价</li>
         <li><b>家庭库是否已有</b>：读取账号 userdata 与页面库存提示，区分本人拥有 / 家庭共享</li>
         <li><b>DLC 是否单独下载</b>：拉取 DLC 清单，按类型区分「随本体安装」与「独立下载项」</li>
         <li><b>是否在 XGP 会员库</b>：比对 Xbox Game Pass 目录</li>
         <li><b>是否有 D 加密</b>：来自 PCGamingWiki / SteamDB 的 Denuvo 与 DRM 信息</li>
         <li><b>是否在 Epic 免费过</b>：比对 Epic 历史免费记录（ITAD 赠送记录）</li>
-        <li><b>Steam Deck 帧数</b>：Steam 官方 Deck 兼容性报告，展示兼容性结论与玩家实测平均帧率（2026-11 起 Steam 官方上线）</li>
+        <li><b>Steam Deck 帧数</b>：自动读取商店页「Steam Deck 兼容性 → 了解更多」弹窗中 Steam 官方渲染的平均帧率，并显示兼容性结论（2026-11 起上线）</li>
       </ul>
     </div>
 
