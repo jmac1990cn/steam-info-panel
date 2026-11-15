@@ -22,6 +22,9 @@ const TTL = {
   epic: 24 * 3600 * 1000,
   epicFail: 10 * 60 * 1000,
   deck: 24 * 3600 * 1000,
+  // 【v1.1.7】已确认「弹窗内无帧率」的负结论只缓存 6h：样本可能随后补齐，
+  // 缓存太久会一直显示「统计中」。有帧率的正结论仍缓存 24h。
+  deckNoFps: 6 * 3600 * 1000,
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1126,6 +1129,8 @@ async function getDeck(appid, dom) {
     updated: null,
     hasHistogram: false,
     fromApi: false,
+    noFpsReason: null, // v1.1.7：unsupported / collecting，来自「了解更多」弹窗早退结论
+    noFpsAt: null,
     source: null,
     note: null,
     errors: [],
@@ -1140,6 +1145,10 @@ async function getDeck(appid, dom) {
     if (dom.updated) out.updated = dom.updated;
     out.hasHistogram = !!dom.hasHistogram;
     if (dom.verdict) out.domVerdict = dom.verdict;
+  }
+  if (dom && dom.noFpsReason) {
+    out.noFpsReason = dom.noFpsReason;
+    out.noFpsAt = Date.now();
   }
 
   // ② 接口：结构化结论 + 帧率可用性
@@ -1165,13 +1174,19 @@ async function getDeck(appid, dom) {
 
   // ③ 状态判定
   // 帧率只在「了解更多」弹窗里；没读到 ≠ Steam 没数据（可能是样本未达阈值或弹窗未打开）
-  if (out.fps == null && out.tested) {
+  if (out.fps == null && out.noFpsReason === "unsupported") {
+    out.note = "Steam Deck 不支持此游戏，Steam 不会提供平均帧率数值";
+  } else if (out.fps == null && out.noFpsReason === "collecting") {
+    out.note = "该游戏的帧率样本仍在统计中，Steam 暂未显示平均帧率；结论缓存 6 小时，可点「重新检测」复查";
+  } else if (out.fps == null && out.tested) {
     out.note = "平均帧率在商店页「Steam Deck 兼容性 → 了解更多」弹窗里展示；若该游戏样本未达阈值，Steam 不会显示数值";
   } else if (out.fps == null && !out.tested) {
     out.note = "Steam 未提供该游戏的 Deck 兼容性 / 帧率数据";
   }
 
-  await cacheSet(key, out, TTL.deck);
+  // 无帧率负结论用短 TTL，便于 Steam 后续补齐数据后自动重试
+  const ttl = (out.fps == null && out.noFpsReason) ? TTL.deckNoFps : TTL.deck;
+  await cacheSet(key, out, ttl);
   return out;
 }
 
@@ -1204,10 +1219,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return await getEpicGiveaways(msg.appid);
       case "deck":
         return await getDeck(msg.appid, msg.dom);
-      // 只读 Deck 缓存：若已从「了解更多」弹窗拿到过帧率，直接复用，避免每次访问都弹窗打扰用户
+      // 只读 Deck 缓存：有帧率直接复用；已确认无帧率（不支持 / 统计中）也直接复用负结论，
+      // 两种情况都不再自动弹窗打扰用户。【v1.1.7】
       case "deckPeek": {
         const h = await cacheGet("deck:" + msg.appid);
-        return h && h.fps != null ? { cached: true, fps: h.fps, updated: h.updated } : { cached: false };
+        if (!h) return { cached: false };
+        if (h.fps != null) return { cached: true, fps: h.fps, updated: h.updated };
+        if (h.noFpsReason) return { cached: true, noFps: true, reason: h.noFpsReason, at: h.noFpsAt || null };
+        return { cached: false };
+      }
+      // 用户手动点开弹窗读到帧率：刷新缓存并清掉「无帧率」负结论
+      case "deckSetFps": {
+        if (msg.fps == null) return { ok: false };
+        const h = (await cacheGet("deck:" + msg.appid)) || {};
+        const v = { ...h };
+        delete v._cached; delete v._age;
+        Object.assign(v, {
+          fps: msg.fps,
+          fpsText: msg.fps + " FPS",
+          updated: msg.updated || null,
+          frameAvailable: true,
+          hasHistogram: true,
+          noFpsReason: null,
+          noFpsAt: null,
+          note: null,
+          source: "Steam 商店「了解更多」弹窗（官方渲染）",
+        });
+        await cacheSet("deck:" + msg.appid, v, TTL.deck);
+        return { ok: true };
       }
       case "getSettings": {
         const o = await chrome.storage.local.get("settings");

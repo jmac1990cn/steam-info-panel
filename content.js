@@ -152,7 +152,8 @@
     e.preventDefault();
     e.stopPropagation();
     const got = await autoReadLearnMore();
-    if (got) applyDeckFps(got.fps, got.updated);
+    // 【v1.1.7】无帧率时返回的是 { noFps:true }，不能当 FPS 回填成 "undefined FPS"
+    if (got && got.fps != null) applyDeckFps(got.fps, got.updated);
   }, true);
 
   /* ---------- 面板内嵌设置 ----------
@@ -809,7 +810,7 @@
   const MODAL = {
     tried: false, clicked: false, btnText: null, opened: false,
     fps: null, updated: null, snippet: "", reason: "", closed: false,
-    fromCache: false, closeWay: "",
+    fromCache: false, closeWay: "", noFpsReason: null, elapsed: 0,
   };
 
   // 找「了解更多」按钮：优先取 Steam Deck 兼容性区块内的，其次全页第一个
@@ -843,6 +844,64 @@
     return { fps: f.fps, fpsText: f.fpsText, updated: d, full };
   }
 
+  /* ---------- 7c. 无帧率页面快速收尾（v1.1.7） ----------
+   * 「Steam Deck 不支持」和「帧率样本仍在统计」这两类游戏，弹窗里根本不会出现
+   * 「平均帧率 X FPS」。旧逻辑一直轮询到 9s 超时才关窗，看起来像卡住很久；
+   * 有帧率的游戏反而几百毫秒就拿到数字。这里改为：只在弹窗容器内取文本，
+   * 一旦明确是这两种状态、或报告主体渲染完且文本稳定仍无数字，就立刻关窗。
+   * -------------------------------------------------------------- */
+  const MODAL_SEL = "[class*='ModalDialog'], [class*='newmodal'], [class*='modal_dialog'], [role='dialog'], [class*='Modal']";
+
+  // 只取弹窗内的可见文本（主文档 + 同源 iframe）。匹配不到容器时依次回退到
+  // iframe 全文、全页文本，保证 Steam 改版后也不会因为取不到文本而误判。
+  function getModalText() {
+    const docs = [document];
+    for (const f of document.querySelectorAll("iframe")) {
+      try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) {}
+    }
+    const parts = [];
+    for (const d of docs) {
+      let nodes = [];
+      try { nodes = Array.from(d.querySelectorAll(MODAL_SEL)); } catch (e) {}
+      for (const dlg of nodes) {
+        if (dlg.closest && dlg.closest("#" + PANEL_ID)) continue;
+        const t = collectVisibleText(dlg);
+        if (t) parts.push(t);
+      }
+    }
+    if (parts.length) return { text: parts.join(" ").replace(/\s+/g, " ").trim(), scoped: true };
+    let s = "";
+    for (const f of document.querySelectorAll("iframe")) {
+      try {
+        const d = f.contentDocument;
+        if (d && d.body) s += " " + collectVisibleText(d.body);
+      } catch (e) {}
+    }
+    if (s.trim()) return { text: s.replace(/\s+/g, " ").trim(), scoped: true };
+    // 未锁定弹窗范围：返回全页文本但标记 scoped=false，早退时给足渲染宽限，避免误杀慢渲染
+    return { text: getDeckFullText(true), scoped: false };
+  }
+
+  // 弹窗明确写出「不会有帧率数值」的两种官方状态，返回 unsupported / collecting / null。
+  // 必须带 Steam Deck / 兼容性语境才判定，避免误命中页面其它模块的「不支持 / 暂无数据」。
+  function detectNoFpsReason(txt) {
+    if (!txt) return null;
+    const t = txt.slice(0, 4000);
+    if (!/Steam\s*Deck|兼容性|帧率|frame\s*rate|compatib|此游戏|平均帧/i.test(t)) return null;
+
+    // 「不支持反作弊 / 不支持某些功能」只是测试说明项，与「游戏在 Deck 上不支持」无关。
+    // v1.1.4 曾把 UnsupportedAntiCheatConfiguration 误读成无帧率，用户明确纠正过，这里必须排除。
+    const functionalOnly = /反作弊|anti[\s-]?cheat|不支持(某些|部分|该)?(功能|特性)|not\s+supported\s+(feature|anti)/i.test(t);
+    const gameLevel = /不支持此游戏|此游戏不受支持|无法在\s*Steam\s*Deck|Steam\s*Deck[^。；;]{0,20}不(受)?支持|兼容性[^。；;]{0,20}不受支持|Unsupported\s+on\s+Steam\s*Deck|not\s+supported\s+on\s+Steam\s*Deck/i.test(t);
+    const labelUnsupported = /(?:兼容性|验证结果|评级|测试结果)\s*[:：]?\s*不(受)?支持|\bUnsupported\b|\bnot\s+supported\b/i.test(t);
+    // 含「反作弊 / 功能不支持」说明项时，只认明确的游戏级结论，不认宽泛的「不支持」标签
+    const gameLevelStrict = /不支持此游戏|此游戏不受支持|游戏[^。；;]{0,10}不受支持|无法在/i.test(t);
+    if (gameLevelStrict || (!functionalOnly && (gameLevel || labelUnsupported))) return "unsupported";
+
+    if (/(仍)?(在)?(统计|收集)中|仍在(统计|收集)|样本(不足|过少|较少|未达)|没有足够的(数据|玩家|样本)|尚无(足够)?(的)?(帧率)?数据|暂无(足够)?(的)?(帧率)?数据|数据不足|数据量不足|帧率数据(仍)?(在)?(收集|统计)|not\s+enough\s+data|don'?t\s+have\s+enough|haven'?t\s+collected\s+enough|insufficient\s+data|still\s+(collecting|gathering)|collecting\s+(frame\s*rate\s*)?data|no\s+(frame\s*rate\s*)?data\s+(yet|available)/i.test(t)) return "collecting";
+    return null;
+  }
+
   // 关掉 Steam 弹窗：主文档 + 同源 iframe 都找关闭按钮，再补 Escape / 全局关闭函数
   function closeLearnMoreModal() {
     const CLOSE = [
@@ -851,7 +910,7 @@
       "[aria-label='Close'], [aria-label*='关闭'], [title='Close']",
       "[class*='close'], [class*='Close']",
     ].join(", ");
-    const DIALOG = "[class*='ModalDialog'], [class*='modal_dialog'], [class*='newmodal'], [role='dialog'], [class*='Modal']";
+    const DIALOG = MODAL_SEL;
     const docs = [document];
     for (const f of document.querySelectorAll("iframe")) {
       try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) {}
@@ -888,8 +947,11 @@
   }
 
   // 自动点开「了解更多」→ 轮询等帧率渲染 → 读取 → 关弹窗
+  // 【v1.1.7】有帧率仍走「读到即关」快速路径（通常 0.2~1s）；无帧率的游戏不再
+  // 傻等满 9s 超时：状态文案连续两轮命中、或报告文本稳定仍无数字，就提前关窗。
+  // 早退返回 { noFps:true, reason }，由后台做 6h 短期缓存，避免每次访问都弹一下。
   async function autoReadLearnMore(lim) {
-    lim = lim || 9000;
+    lim = lim || 5000;
     MODAL.tried = true;
     const btn = findLearnMoreBtn();
     if (!btn) { MODAL.reason = "未找到「了解更多」按钮（Steam 页面结构可能已变）"; return null; }
@@ -898,24 +960,65 @@
     catch (e) { MODAL.reason = "点击失败：" + (e && e.message); return null; }
 
     const t0 = Date.now();
+    const POLL = 200;
+
+    const success = (got) => {
+      MODAL.opened = true;
+      MODAL.fps = got.fps;
+      MODAL.updated = got.updated;
+      MODAL.elapsed = Date.now() - t0;
+      const idx = got.full.search(/平均帧率|average\s*frame\s*rate/i);
+      MODAL.snippet = idx >= 0
+        ? got.full.slice(Math.max(0, idx - 60), idx + 140)
+        : ("…" + got.full.slice(Math.max(0, (got.full.indexOf(got.fpsText) || 0) - 60), (got.full.indexOf(got.fpsText) || 0) + 80));
+      closeLearnMoreModal();
+      return { fps: got.fps, fpsText: got.fpsText, updated: got.updated, elapsed: MODAL.elapsed };
+    };
+
+    const finishNoFps = (reason, how) => {
+      const last = readModalFps(); // 关窗前最后确认一次，防止误杀慢渲染的帧率
+      if (last) return success(last);
+      MODAL.opened = true;
+      MODAL.noFpsReason = reason;
+      MODAL.elapsed = Date.now() - t0;
+      MODAL.reason = "弹窗无帧率数值（" + (reason === "unsupported" ? "Steam Deck 不支持" : "帧率样本统计中") +
+        "），" + how + "，已提前关闭（" + MODAL.elapsed + "ms）";
+      closeLearnMoreModal();
+      return { noFps: true, reason, elapsed: MODAL.elapsed };
+    };
+
+    let lastText = "", stable = 0, lastReason = null, reasonHits = 0;
     while (Date.now() - t0 < lim) {
       const got = readModalFps();
-      if (got) {
-        MODAL.opened = true;
-        MODAL.fps = got.fps;
-        MODAL.updated = got.updated;
-        const idx = got.full.search(/平均帧率|average\s*frame\s*rate/i);
-        MODAL.snippet = idx >= 0
-          ? got.full.slice(Math.max(0, idx - 60), idx + 140)
-          : ("…" + got.full.slice(Math.max(0, (got.full.indexOf(got.fpsText) || 0) - 60), (got.full.indexOf(got.fpsText) || 0) + 80));
-        closeLearnMoreModal();
-        return { fps: got.fps, fpsText: got.fpsText, updated: got.updated };
+      if (got) return success(got);
+
+      const mo = getModalText();
+      const mt = mo.text;
+      stable = (mt && mt === lastText) ? stable + 1 : 0;
+      lastText = mt;
+
+      const reason = detectNoFpsReason(mt);
+      reasonHits = (reason && reason === lastReason) ? reasonHits + 1 : (reason ? 1 : 0);
+      lastReason = reason;
+
+      // ① 弹窗明确写出「不支持 / 统计中」：连续两轮 + 过了最短渲染窗口才收尾。
+      //    未锁定弹窗范围（全页文本回退）时放宽到 1.2s，防止误命中页面其它模块文案。
+      const minWait = mo.scoped ? 500 : 1200;
+      if (reasonHits >= 2 && Date.now() - t0 >= minWait && mt.length >= 40) {
+        return finishNoFps(reason, "检测到官方状态文案");
       }
-      await new Promise((r) => setTimeout(r, 220));
+      // ② 已锁定弹窗范围：报告主体渲染完（长文本 + 兼容性语境）且连续 3 轮文本不变，仍无数字
+      if (mo.scoped && stable >= 3 && mt.length >= 80 && Date.now() - t0 >= 700 &&
+          /Steam\s*Deck|兼容性|此游戏|测试|报告|frame\s*rate|compatib/i.test(mt)) {
+        return finishNoFps(reason || "collecting", "弹窗内容已稳定但无帧率");
+      }
+      await new Promise((r) => setTimeout(r, POLL));
     }
     MODAL.reason = "已点击「了解更多」，但 " + Math.round(lim / 1000) + "s 内弹窗未渲染出「平均帧率 X FPS」";
+    MODAL.noFpsReason = "collecting";
+    MODAL.elapsed = Date.now() - t0;
     closeLearnMoreModal();
-    return null;
+    return { noFps: true, reason: "collecting", elapsed: MODAL.elapsed, timeout: true };
   }
 
   // 常驻监听：用户此后手动点开「了解更多」时，自动把帧率回填到面板第 7 项
@@ -928,7 +1031,7 @@
       clearTimeout(timer);
       timer = setTimeout(() => {
         // 只在页面上真的出现 Steam 弹窗时才解析，避免误扫主 DOM
-        const dlg = document.querySelector("[class*='ModalDialog'], [class*='newmodal'], [role='dialog']");
+        const dlg = document.querySelector(MODAL_SEL);
         if (!dlg) return;
         const got = readModalFps();
         if (!got) return;
@@ -942,6 +1045,8 @@
 
   // 把「了解更多」里读到的帧率直接更新到第 7 项徽标/副标题/详情
   function applyDeckFps(fps, updated) {
+    // 手动点开弹窗读到帧率时，同步刷新后台缓存并清掉「无帧率」负结论
+    ask("deckSetFps", { appid, fps, updated });
     const item = panel.querySelector('.sip-item[data-key="deck"]');
     if (!item) return;
     const badge = item.querySelector("[data-badge]");
@@ -971,10 +1076,12 @@
   async function loadDeck() {
     await waitDeckReady();
     // 【v1.1.5】帧率数字只在「了解更多」弹窗里，主 DOM 通常没有。
-    // 优先复用 24h 缓存（避免每次访问都弹窗），否则自动点开弹窗读 Steam 官方渲染的数值。
+    // 【v1.1.7】缓存三态：有帧率（24h，直接复用）／已确认无帧率（6h，跳过弹窗）／无缓存（点开弹窗）。
     const peek = await ask("deckPeek", { appid });
     const dom = scanDomDeck();
     let fromModal = null;
+    let noFps = null;
+
     if (peek && peek.cached && peek.fps != null) {
       dom.fps = peek.fps;
       dom.fpsText = peek.fps + " FPS";
@@ -984,20 +1091,31 @@
       MODAL.fromCache = true;
       MODAL.fps = peek.fps;
       MODAL.updated = peek.updated || null;
+    } else if (peek && peek.cached && peek.noFps) {
+      // 上次已确认弹窗里没有帧率数值（不支持 / 样本统计中），短时间内不再自动弹窗
+      noFps = { reason: peek.reason || "collecting", cached: true };
+      MODAL.fromCache = true;
+      MODAL.noFpsReason = noFps.reason;
     } else if (dom.fps == null) {
       fromModal = await autoReadLearnMore();
-      if (fromModal) {
+      if (fromModal && fromModal.fps != null) {
         dom.fps = fromModal.fps;
         dom.fpsText = fromModal.fpsText;
         dom.found = true;
         if (fromModal.updated) dom.updated = fromModal.updated;
         dom.hasHistogram = true; // 弹窗里带直方图
+      } else if (fromModal && fromModal.noFps) {
+        noFps = { reason: fromModal.reason, cached: false, elapsed: fromModal.elapsed };
+        dom.noFpsReason = noFps.reason; // 交给后台做 6h 短期负结论缓存
       }
     }
     watchLearnMoreModal(); // 之后用户手动点开也能自动回填
     const r = await ask("deck", { appid, dom });
 
     const cat = r.categoryText || (r.domVerdict || "");
+    const noFpsReason = r.noFpsReason || (noFps && noFps.reason) || null;
+    const deckUnsupported = noFpsReason === "unsupported" || r.category === 1;
+    const deckCollecting = !deckUnsupported && noFpsReason === "collecting";
     let badge = "无数据",
       cls = "b-load",
       sub = "Steam 未提供 Deck 帧率";
@@ -1006,6 +1124,14 @@
       badge = r.fps + " FPS";
       cls = "b-ok";
       sub = "Steam Deck 平均帧率 " + r.fps + " FPS" + (cat ? "（兼容性：" + cat + "）" : "");
+    } else if (deckUnsupported) {
+      badge = "不支持";
+      cls = "b-bad";
+      sub = "Steam Deck 不支持此游戏 · 无平均帧率数据";
+    } else if (deckCollecting) {
+      badge = "统计中";
+      cls = "b-info";
+      sub = "帧率样本仍在统计 · Steam 暂未显示平均帧率";
     } else if (r.categoryText) {
       badge = r.categoryText;
       cls = r.category === 3 ? "b-ok" : r.category === 2 ? "b-info" : r.category === 1 ? "b-bad" : "b-load";
@@ -1016,15 +1142,21 @@
       sub = "Steam 未提供该游戏的 Deck 兼容性 / 帧率数据";
     }
 
+    const fpsCell = r.fps != null
+      ? `<b>${r.fps} FPS</b>${r.updated ? "（最后更新 " + esc(r.updated) + "）" : ""}${fromModal ? " <em style='color:#8ba6bd'>了解更多弹窗</em>" : ""}`
+      : deckUnsupported ? "Steam 未提供（Deck 不支持）"
+      : deckCollecting ? "Steam 暂未公布（样本统计中）"
+      : "见商店页「了解更多」弹窗";
+
     const detail = `
       <div class="sip-kv"><span>兼容性</span><span>${r.categoryText ? esc(r.categoryText) : (r.domVerdict ? esc(r.domVerdict) : "未评级 / 未提供")}</span></div>
-      <div class="sip-kv"><span>平均帧率</span><span>${
-        r.fps != null ? `<b>${r.fps} FPS</b>${r.updated ? "（最后更新 " + esc(r.updated) + "）" : ""}${fromModal ? " <em style='color:#8ba6bd'>了解更多弹窗</em>" : ""}` : "见商店页「了解更多」弹窗"
-      }</span></div>
+      <div class="sip-kv"><span>平均帧率</span><span>${fpsCell}</span></div>
       <div class="sip-kv"><span>帧率分布</span><span>${r.hasHistogram ? "有直方图" : "无 / 未检出"}</span></div>
       <div class="sip-kv"><span>最后更新</span><span>${r.updated ? esc(r.updated) : "—"}</span></div>
       <div class="sip-kv"><span>数据来源</span><span>${r.fps != null && fromModal ? "Steam 商店「了解更多」弹窗（官方渲染）" : (r.source ? esc(r.source) : "Steam Deck 兼容性报告")}</span></div>
-      ${r.note ? `<div style="margin-top:6px;color:#e0a85a">提示：${esc(r.note)}</div>` : ""}
+      ${noFpsReason
+        ? `<div style="margin-top:6px;color:#8ba6bd">已确认「了解更多」弹窗内无帧率数值并立即关闭${noFps && !noFps.cached && noFps.elapsed ? "（本次 " + noFps.elapsed + "ms）" : ""}；结论缓存 6 小时，期间不再弹窗。可点「重新检测」复查。</div>`
+        : (r.note ? `<div style="margin-top:6px;color:#e0a85a">提示：${esc(r.note)}</div>` : "")}
       <div style="margin-top:6px"><a href="#" id="sip-deck-open" title="自动点开 Steam 的「了解更多」弹窗并读取帧率">↗ 打开 Steam「了解更多」查看帧率直方图</a></div>
       ${r.errors && r.errors.length ? `<div class="sip-err">${r.errors.map(esc).join("<br>")}</div>` : ""}`;
 

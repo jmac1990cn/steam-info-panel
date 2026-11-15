@@ -110,7 +110,7 @@
   </head>
   <body>
     <h1>Steam 游戏速查面板</h1>
-    <div class="sub">版本 1.1.6 · 打开任意 Steam 商店游戏页，右侧自动显示七项检测结果</div>
+    <div class="sub">版本 1.1.7 · 打开任意 Steam 商店游戏页，右侧自动显示七项检测结果</div>
     <div id="envwarn" class="warnbox"></div>
 
     <div class="card">
@@ -122,13 +122,13 @@
         <li><b>是否在 XGP 会员库</b>：比对 Xbox Game Pass 目录</li>
         <li><b>是否有 D 加密</b>：来自 PCGamingWiki / SteamDB 的 Denuvo 与 DRM 信息</li>
         <li><b>是否在 Epic 免费过</b>：比对 Epic 历史免费记录（ITAD 赠送记录）</li>
-        <li><b>Steam Deck 帧数</b>：自动读取商店页「Steam Deck 兼容性 → 了解更多」弹窗中 Steam 官方渲染的平均帧率，并显示兼容性结论（2026-11 起上线）</li>
+        <li><b>Steam Deck 帧数</b>：自动读取商店页「Steam Deck 兼容性 → 了解更多」弹窗中 Steam 官方渲染的平均帧率，并显示兼容性结论（2026-11 起上线）。v1.1.7：不支持 / 帧率统计中的游戏会识别状态后立刻关窗，面板显示「不支持 / 统计中」，并缓存 6 小时不再重复弹窗</li>
       </ul>
     </div>
 
     <div class="card">
       <h2>缓存</h2>
-      <div class="muted">价格 6 小时 · 库存 10 分钟 · DLC/GamePass 12 小时 · DRM 24 小时</div>
+      <div class="muted">价格 6 小时 · 库存 10 分钟 · DLC/GamePass 12 小时 · DRM 24 小时 · Deck 帧率 24 小时（无帧率结论 6 小时）</div>
       <div id="stat">读取中…</div>
       <div style="margin-top: 12px"><button id="clear">清除全部缓存</button></div>
     </div>
