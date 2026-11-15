@@ -732,30 +732,46 @@
     return document.documentElement.textContent || document.body.textContent || "";
   }
 
-  // 以「平均帧率 / average frame rate」为锚点，取其附近第一个「数字 FPS」
+  // 从全页文本中抽取 Steam Deck 平均帧率数值（最忠实于页面显示的数）。
+  // 容错覆盖多种真实句式：
+  //   中文「平均帧率 / 平均帧数」、英文「Average frame rate」、带小数「58.2 FPS」、
+  //   数字与 FPS 之间隔了较多文字（窗口放宽到 200 字符）。
+  // 仍不采信系统需求里的「60 FPS」：锚点/语境必须出现 平均/帧率/帧数/fps/frame/deck 任一关键词。
   function parseDeckFps(full) {
     let fps = null, fpsText = null;
-    const anchor = full.search(/平均帧率|average\s*frame\s*rate/i);
-    if (anchor >= 0) {
-      const seg = full.slice(anchor, anchor + 90);
-      const m = seg.match(/(\d{1,3})\s*FPS/i);
+    const NUM = /(\d{1,4}(?:\.\d+)?)/;
+
+    // 锚点1：中文「平均」+（帧率|帧数|fps|frame）+ 之后 200 字符内第一个「数字 FPS」
+    const a = full.search(/平均.{0,10}(帧率|帧数|fps|frame\s*rate)|average\s*frame\s*rate/i);
+    if (a >= 0) {
+      const seg = full.slice(a, a + 200);
+      const m = seg.match(/(\d{1,4}(?:\.\d+)?)\s*FPS/i);
       if (m) { fps = Number(m[1]); fpsText = m[0]; }
     }
-    // 兜底：任意「数字 FPS」，仅当其前 45 字符出现「帧率 / framerate / frame rate」语境才采信
-    // （只看数字之前，避免把匹配到的 FPS 自身算进上下文 → 误中系统需求里的「60 FPS」）
+
+    // 锚点2：任意「数字 FPS」，其前 80 字符出现 平均/帧率/帧数/fps/frame/deck 语境才采信
     if (fps == null) {
-      const re = /(\d{1,3})\s*FPS/gi;
+      const re = /(\d{1,4}(?:\.\d+)?)\s*FPS/gi;
       let mm;
       while ((mm = re.exec(full))) {
-        const before = full.slice(Math.max(0, mm.index - 45), mm.index);
-        if (/帧率|framerate|frame\s*rate/i.test(before)) {
-          fps = Number(mm[1]);
-          fpsText = mm[0];
-          break;
+        const before = full.slice(Math.max(0, mm.index - 80), mm.index);
+        if (/(平均|帧率|帧数|fps|frame|deck|steam\s*deck)/i.test(before)) {
+          fps = Number(mm[1]); fpsText = mm[0]; break;
         }
       }
     }
+
     return { fps, fpsText };
+  }
+
+  // 诊断：截取 Steam 页面上「帧率/平均/FPS/Deck」附近的真实文本片段，供测试版排查。
+  // 若仍抓不到数值，把这段原样贴回即可精准定位句式。
+  function deckDebugSnippet(full) {
+    const idx = full.search(/平均|帧率|帧数|fps|frame\s*rate|steam\s*deck/i);
+    if (idx < 0) {
+      return "(未命中任何关键词：页面文本中找不到 平均/帧率/帧数/FPS/Frame/Steam Deck —— 可能脚本过早运行或该区块未渲染)";
+    }
+    return full.slice(Math.max(0, idx - 30), idx + 220).replace(/\s+/g, " ").trim();
   }
 
   function parseDeckDate(full) {
@@ -766,11 +782,14 @@
   }
 
   // 轮询等待帧率文本出现在全页文本中（Steam 商店页帧率区为异步注入），超时上限 lim
+  // 放宽判定：等待真正的「平均…（帧率/帧数/fps/frame）」或任意一个「数字 FPS」出现，
+  // 避免只认「帧率」二字而漏掉「平均帧数 / Average frame rate」等真实句式。
   async function waitForDeckFps(lim) {
-    lim = lim || 10000;
+    lim = lim || 12000;
     const t0 = Date.now();
+    const probe = /(平均.{0,10}(帧率|帧数|fps|frame))|(\d{1,4}(?:\.\d+)?\s*FPS)/i;
     while (Date.now() - t0 < lim) {
-      if (/平均帧率|帧率|framerate|frame\s*rate/i.test(getDeckFullText())) return true;
+      if (probe.test(getDeckFullText())) return true;
       await new Promise((r) => setTimeout(r, 200));
     }
     return false;
@@ -792,6 +811,7 @@
     await waitDeckReady();
     await waitForDeckFps(); // 轮询直到帧率文本注入全页文本（含超时）
     const dom = scanDomDeck();
+    const dbgText = deckDebugSnippet(getDeckFullText()); // 测试版诊断：页面真实文本片段
     const r = await ask("deck", { appid, dom });
 
     const cat = r.categoryText || (r.domVerdict || "");
@@ -827,6 +847,11 @@
       <div class="sip-kv"><span>数据来源</span><span>${r.source ? esc(r.source) : "Steam Deck 兼容性报告"}</span></div>
       ${r.note ? `<div style="margin-top:6px;color:#e0a85a">提示：${esc(r.note)}</div>` : ""}
       <div style="margin-top:6px"><a href="https://store.steampowered.com/saleaction/GetDeckCompatibilityReport/${appid}" target="_blank" rel="noreferrer">在商店页「Steam Deck 兼容性 → 了解更多」查看帧率直方图 →</a></div>
+      <details style="margin-top:8px"><summary style="cursor:pointer;color:#8ba6bd;font-size:12px">调试信息（测试版 1.1.3-beta）</summary>
+        <div class="sip-debug">页面实际文本片段：<br>${esc(dbgText)}</div>
+        ${r.debugApi ? `<div class="sip-debug">接口 frame 字段：${esc(r.debugApi)}</div>` : ""}
+        <div class="sip-debug">解析结果：fps=${r.fps != null ? r.fps : "null"} · frameAvailable=${r.frameAvailable} · found=${dom.found} · hasHistogram=${dom.hasHistogram}</div>
+      </details>
       ${r.errors && r.errors.length ? `<div class="sip-err">${r.errors.map(esc).join("<br>")}</div>` : ""}`;
 
     render("deck", badge, cls, sub, detail);

@@ -1105,18 +1105,21 @@ async function getDeckReport(appid) {
 // 尽力从接口返回里抽取一个帧率数值（frame_resolved_items 内部结构不公开，仅作兜底）
 function extractApiFps(res) {
   try {
-    const items = (res && (res.frame_resolved_items || res.frameResolvedItems)) || [];
-    const hay = JSON.stringify(items);
-    // ① 显式字段： "fps":45 / "average":45 / "framerate":45
-    let m = hay.match(/"fps"\s*:\s*(\d{2,3})/i) ||
-            hay.match(/"average"\s*:\s*(\d{2,3})/i) ||
-            hay.match(/"framerate"\s*:\s*(\d{2,3})/i);
-    if (m) return Number(m[1]);
+    const hay = JSON.stringify(res || {});
+    // ① 全量扫描：帧率相关字段名 + 数值（容忍 fps/framerate/frame_rate/average/avg/frames/perf 等命名）
+    const nameRe = /"(?:fps|framerate|frame_rate|frameRate|average|avg|frames|perf|performance)"\s*:\s*(\d{1,4}(?:\.\d+)?)/gi;
+    let m;
+    while ((m = nameRe.exec(hay))) {
+      const v = Number(m[1]);
+      if (v >= 10 && v <= 240) return v;
+    }
     // ② 字符串里直接带「数字 FPS」
-    const m2 = hay.match(/(\d{2,3})\s*FPS/i);
-    if (m2) return Number(m2[1]);
-    // ③ 兜底：任何 20–240 的数值字段，名字像帧率
-    for (const it of items) {
+    const m2 = hay.match(/(\d{1,4}(?:\.\d+)?)\s*FPS/i);
+    if (m2) { const v = Number(m2[1]); if (v >= 10 && v <= 240) return v; }
+    // ③ 兜底：任何 10–240 的数值字段，名字像帧率
+    const items = (res && (res.frame_resolved_items || res.frameResolvedItems)) || [];
+    const arr = Array.isArray(items) ? items : [items];
+    for (const it of arr) {
       if (!it || typeof it !== "object") continue;
       for (const k of Object.keys(it)) {
         if (/fps|frame|framerate|perf|average/i.test(k)) {
@@ -1176,6 +1179,12 @@ async function getDeck(appid, dom) {
       out.frameAvailable =
         frameCat != null || (Array.isArray(frameItems) && frameItems.length > 0);
       out.source = "Steam Deck 兼容性报告（官方接口 + 商店页 DOM）";
+      // 测试版诊断：把接口里 frame 相关字段原样截出来，便于排查「已收录却抓不到数值」
+      try {
+        out.debugApi =
+          "frame_resolved_category=" + frameCat +
+          " | frame_resolved_items=" + JSON.stringify(frameItems).slice(0, 800);
+      } catch (e) { out.debugApi = "(序列化失败)"; }
       // DOM 没抓到数但接口确认有帧率数据时，尽力从接口补一个
       if (out.fps == null && out.frameAvailable) {
         const apiFps = extractApiFps(res);

@@ -80,8 +80,13 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Steam 游戏速查面板 v${{ steps.meta.outputs.version }}
+          prerelease: ${{ contains(steps.meta.outputs.version, 'beta') || contains(steps.meta.outputs.version, 'alpha') || contains(steps.meta.outputs.version, 'rc') }}
           body: |
             ## 自动构建发布（GitHub Actions）
+
+            > ⚠️ 这是 **测试版（beta）**，含 Steam Deck 帧率抓取的【调试诊断】面板。
+            > 若面板第 7 项仍显示「已收录帧率但未抓到数值」，请展开「调试信息（测试版 1.1.3-beta）」，
+            > 把其中「页面实际文本片段」与「接口 frame 字段」两段原样贴回，即可精准定位句式并修复。
 
             ### 安装方式
             - **侧载（推荐）**：下载 `steam-info-panel-${{ steps.meta.outputs.version }}.zip`，解压后在浏览器扩展管理页
